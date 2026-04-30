@@ -228,30 +228,38 @@ class QueryResponse(BaseModel):
 
 - `SecretStr` 用于 `pg_password` 和 `openai_api_key`
 - 添加验证器：`pg_user` 和 `pg_password` 不能为空字符串
-- `pg_databases` 解析：逗号分隔字符串 → `list[str]`，空列表表示自动发现
-- `pg_exclude_databases` 解析：逗号分隔字符串 → `list[str]`
-- `validation_deny_list` 解析：逗号分隔字符串 → `list[str]`
+- `pg_databases` / `pg_exclude_databases` / `validation_deny_list`：逗号分隔字符串，下游统一用 property 解析
 
 ```python
-from pydantic import field_validator
+from pydantic import field_validator, computed_field
 
 class Settings(BaseSettings):
     # ... 其他字段 ...
-    pg_databases: str = ""                          # 原始环境变量值
+    pg_databases: str = ""                          # 原始环境变量值，保留 str
     pg_exclude_databases: str = "template0,template1,postgres"
     validation_deny_list: str = ""
 
-    @field_validator("pg_databases", "pg_exclude_databases", "validation_deny_list")
-    @classmethod
-    def _parse_comma_list(cls, v: str) -> list[str]:
-        if not v:
-            return []
-        return [item.strip() for item in v.split(",") if item.strip()]
-
+    @computed_field
     @property
     def pg_databases_list(self) -> list[str]:
-        return self._parse_comma_list(self.pg_databases)
+        if not self.pg_databases:
+            return []
+        return [item.strip() for item in self.pg_databases.split(",") if item.strip()]
+
+    @computed_field
+    @property
+    def pg_exclude_databases_list(self) -> list[str]:
+        return [item.strip() for item in self.pg_exclude_databases.split(",") if item.strip()]
+
+    @computed_field
+    @property
+    def validation_deny_list_items(self) -> list[str]:
+        if not self.validation_deny_list:
+            return []
+        return [item.strip() for item in self.validation_deny_list.split(",") if item.strip()]
 ```
+
+**注意**：保持原始字段为 `str`（环境变量直接映射），所有解析通过 `computed_field` property 统一进行。下游调用方使用 `settings.pg_databases_list` 等 property。
 
 **验收标准**:
 - [ ] 环境变量覆盖默认值
@@ -604,6 +612,19 @@ Mock `AsyncOpenAI` 的 `chat.completions.create`：
 
 实现只读 SQL 执行（详见 Design §4.9）。
 
+**方法签名**：
+```python
+class SqlExecutor:
+    async def execute(
+        self,
+        database: str,
+        sql: str,
+        schema_names: list[str] | None = None,
+        is_explain: bool = False,
+    ) -> ExecutionResult:
+        """执行 SQL。is_explain=True 时跳过 LIMIT 包裹，直接执行原 SQL。"""
+```
+
 **核心实现要点**:
 
 1. **会话级安全配置**（使用 `SET` 参数化语句，禁止 f-string 拼接）：
@@ -641,9 +662,9 @@ Mock `AsyncOpenAI` 的 `chat.completions.create`：
        limit = self._settings.max_rows + 1
        return f"SELECT * FROM ({stripped}) AS __pg_mcp_q LIMIT {limit}"
    ```
-   - **普通 SELECT**：无论原 SQL 是否含 `LIMIT`，都包裹为外层 `SELECT * FROM (...) LIMIT N`
+   - **普通 SELECT**：无论原 SQL 是否含 `LIMIT`，都包裹为外层 `SELECT * FROM (...) LIMIT (max_rows + 1)`
    - **EXPLAIN 语句**：跳过 LIMIT 包裹，直接执行原 SQL（validator 返回 `is_explain=True`）
-   - 外层 LIMIT 取值为 `min(user_limit, max_rows + 1)`（若用户显式 LIMIT 更小，保留用户值）
+   - 外层 LIMIT 固定使用 `max_rows + 1`，保证结果截断检测始终可用
    - 返回 `max_rows + 1` 行用于检测是否被截断
    - **AST 层校验**：先用 SQLGlot 解析确认是单条 SELECT，再包裹，避免语法错误
 
@@ -756,8 +777,7 @@ class QueryEngine:
             self._semaphore.release()
 
     async def _do_execute(self, request, request_id, log) -> QueryResponse:
-        # 2. 输入校验（QueryRequest 已通过 Pydantic 校验）
-        #    额外校验：空字符串 query 已在 Field(min_length=1) 中处理
+        # 2. 输入校验（QueryRequest 已通过 Pydantic model_validator 校验）
 
         # 3. admin_action 处理
         if request.admin_action == "refresh_schema":
@@ -805,6 +825,7 @@ class QueryEngine:
             # 8. SQL 校验
             val_result = self._sql_val.validate(sql, schema)
             if val_result.valid:
+                is_explain = val_result.is_explain
                 break
 
             if attempt < self._settings.max_retries:
@@ -829,7 +850,7 @@ class QueryEngine:
 
         # 10. SQL 执行
         try:
-            exec_result = await self._sql_exec.execute(database, sql)
+            exec_result = await self._sql_exec.execute(database, sql, is_explain=is_explain)
         except SqlTimeoutError:
             raise
         except asyncpg.PostgresError as e:
@@ -864,23 +885,22 @@ class QueryEngine:
                         raise SqlUnsafeError(val_result.reason or "修正 SQL 安全校验未通过")
                     # 重新执行
                     try:
-                        exec_result = await self._sql_exec.execute(database, sql)
+                        exec_result = await self._sql_exec.execute(database, sql, is_explain=is_explain)
                     except SqlTimeoutError:
                         raise
                     except asyncpg.PostgresError as e:
                         raise SqlExecuteError(str(e))
-                    # 修正后重新验证结果（递归，但受 max_retries 限制）
-                    if self._result_val.should_validate(sql, exec_result, gen_result):
-                        verdict = await self._result_val.validate(
-                            request.query, sql, exec_result, schema
-                        )
-                        if verdict.verdict == "fix":
-                            if val_attempt < self._settings.max_retries:
-                                val_feedback = f"Fix attempt {val_attempt + 1} result feedback: {verdict.reason}"
-                                continue
-                            raise ValidationFailedError("结果验证反复修正后仍不满足")
-                        elif verdict.verdict == "fail":
-                            raise ValidationFailedError(verdict.reason or "结果验证失败")
+                    # 修正后强制重新验证结果（不依赖 should_validate 判断）
+                    verdict = await self._result_val.validate(
+                        request.query, sql, exec_result, schema
+                    )
+                    if verdict.verdict == "fix":
+                        if val_attempt < self._settings.max_retries:
+                            val_feedback = f"Fix attempt {val_attempt + 1} result feedback: {verdict.reason}"
+                            continue
+                        raise ValidationFailedError("结果验证反复修正后仍不满足")
+                    elif verdict.verdict == "fail":
+                        raise ValidationFailedError(verdict.reason or "结果验证失败")
                     break
                 else:
                     raise ValidationFailedError("结果验证修正后仍无法生成合法 SQL")
@@ -1339,9 +1359,9 @@ def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
         }
 
     @app.get("/sse")
-    async def sse_endpoint() -> Response:
+    async def sse_endpoint(request: Request) -> Response:
         async with sse_transport.connect_sse(
-            request.scope, request.receive, request._send
+            request.scope, request.receive, request.send
         ) as (read_stream, write_stream):
             await server._server.run(
                 read_stream, write_stream, server._server.create_initialization_options()
@@ -1350,7 +1370,7 @@ def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
 
     @app.post("/messages")
     async def messages_endpoint(request: Request) -> Response:
-        return await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+        return await sse_transport.handle_post_message(request.scope, request.receive, request.send)
 
     return app
 ```
