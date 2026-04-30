@@ -1,8 +1,10 @@
 """Shared pytest fixtures for pg-mcp test suite."""
 
+from __future__ import annotations
+
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Optional, Protocol
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -43,17 +45,17 @@ class MockSqlGenerator:
         logprob: float = 0.0,
         prompt_tokens: int = 100,
         completion_tokens: int = 50,
-        raise_error: Exception | None = None,
+        raise_error: Optional[Exception] = None,
     ):
         self._sql = sql
         self._logprob = logprob
         self._prompt_tokens = prompt_tokens
         self._completion_tokens = completion_tokens
         self._raise_error = raise_error
-        self.generate_calls: list[tuple[str, str, str | None]] = []
+        self.generate_calls: list[tuple[str, str, Optional[str]]] = []
 
     async def generate(
-        self, query: str, schema_context: str, feedback: str | None = None
+        self, query: str, schema_context: str, feedback: Optional[str] = None
     ) -> SqlGenerationResult:
         self.generate_calls.append((query, schema_context, feedback))
         if self._raise_error:
@@ -72,8 +74,8 @@ class MockSqlValidator:
     def __init__(
         self,
         valid: bool = True,
-        code: str | None = None,
-        reason: str | None = None,
+        code: Optional[str] = None,
+        reason: Optional[str] = None,
         is_explain: bool = False,
         toggle_on_call: bool = False,
     ):
@@ -83,9 +85,9 @@ class MockSqlValidator:
         self._is_explain = is_explain
         self._toggle_on_call = toggle_on_call
         self._current_valid = valid
-        self.validate_calls: list[tuple[str, object | None]] = []
+        self.validate_calls: list[tuple[str, Optional[object]]] = []
 
-    def validate(self, sql: str, schema: DatabaseSchema | None = None) -> ValidationResult:
+    def validate(self, sql: str, schema: Optional[DatabaseSchema] = None) -> ValidationResult:
         self.validate_calls.append((sql, schema))
         result = ValidationResult(
             valid=self._current_valid,
@@ -103,13 +105,13 @@ class MockSqlExecutor:
 
     def __init__(
         self,
-        columns: list[str] | None = None,
-        column_types: list[str] | None = None,
-        rows: list[list] | None = None,
-        row_count: int | None = None,
+        columns: Optional[list[str]] = None,
+        column_types: Optional[list[str]] = None,
+        rows: Optional[list[list]] = None,
+        row_count: Optional[int] = None,
         truncated: bool = False,
-        truncated_reason: str | None = None,
-        raise_error: Exception | None = None,
+        truncated_reason: Optional[str] = None,
+        raise_error: Optional[Exception] = None,
     ):
         self._columns = columns or ["id"]
         self._column_types = column_types or ["integer"]
@@ -124,7 +126,7 @@ class MockSqlExecutor:
         self,
         database: str,
         sql: str,
-        schema_names: list[str] | None = None,
+        schema_names: Optional[list[str]] = None,
         is_explain: bool = False,
     ) -> ExecutionResult:
         self.execute_calls.append((database, sql, is_explain))
@@ -145,15 +147,15 @@ class MockSchemaCache:
 
     def __init__(
         self,
-        schemas: dict[str, DatabaseSchema] | None = None,
-        databases: list[str] | None = None,
-        raise_on_get: Exception | None = None,
+        schemas: Optional[dict[str, DatabaseSchema]] = None,
+        databases: Optional[list[str]] = None,
+        raise_on_get: Optional[Exception] = None,
     ):
         self._schemas = schemas or {}
         self._databases = databases or list(self._schemas.keys())
         self._raise_on_get = raise_on_get
         self.get_calls: list[str] = []
-        self.refresh_calls: list[str | None] = []
+        self.refresh_calls: list[Optional[str]] = []
 
     async def get_schema(self, database: str) -> DatabaseSchema:
         self.get_calls.append(database)
@@ -163,7 +165,7 @@ class MockSchemaCache:
             raise PgMcpError(f"Schema not found for {database}")
         return self._schemas[database]
 
-    async def refresh(self, database: str | None = None) -> RefreshResult:
+    async def refresh(self, database: Optional[str] = None) -> RefreshResult:
         self.refresh_calls.append(database)
         return RefreshResult(succeeded=[database] if database else [], failed=[])
 
@@ -174,7 +176,7 @@ class MockSchemaCache:
 class MockDbInference:
     """Mock database inference returning a pre-configured database name."""
 
-    def __init__(self, database: str = "test_db", raise_error: Exception | None = None):
+    def __init__(self, database: str = "test_db", raise_error: Optional[Exception] = None):
         self._database = database
         self._raise_error = raise_error
         self.infer_calls: list[str] = []
@@ -193,9 +195,9 @@ class MockResultValidator:
         self,
         should_validate: bool = False,
         verdict: str = "pass",
-        reason: str | None = None,
-        suggested_sql: str | None = None,
-        raise_error: Exception | None = None,
+        reason: Optional[str] = None,
+        suggested_sql: Optional[str] = None,
+        raise_error: Optional[Exception] = None,
     ):
         self._should_validate = should_validate
         self._verdict = verdict
@@ -226,7 +228,7 @@ class MockResultValidator:
         if self._raise_error:
             raise self._raise_error
         return ValidationVerdict(
-            verdict=self._verdict,  # type: ignore[arg-type]
+            verdict=self._verdict,
             reason=self._reason,
             suggested_sql=self._suggested_sql,
         )

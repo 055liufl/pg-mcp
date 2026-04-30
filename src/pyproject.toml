@@ -54,3 +54,7 @@ disallow_untyped_defs = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: marks tests that require PostgreSQL and/or Redis",
+    "e2e: marks end-to-end tests",
+]

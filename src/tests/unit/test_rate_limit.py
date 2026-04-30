@@ -35,7 +35,7 @@ def _make_settings(max_concurrent: int = 20) -> Settings:
     )
 
 
-def _make_engine(settings: Settings | None = None) -> QueryEngine:
+def _make_engine(settings: Optional[Settings] = None) -> QueryEngine:
     from pg_mcp.models.schema import ColumnInfo, DatabaseSchema, TableInfo
     from datetime import datetime, timezone
 

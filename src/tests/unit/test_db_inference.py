@@ -31,8 +31,8 @@ class MockSchemaCache:
     def __init__(
         self,
         databases: list[str],
-        schemas: dict[str, DatabaseSchema] | None = None,
-        raise_on_get: Exception | None = None,
+        schemas: Optional[dict[str, DatabaseSchema]] = None,
+        raise_on_get: Optional[Exception] = None,
     ) -> None:
         self._databases = databases
         self._schemas = schemas or {}
@@ -48,7 +48,7 @@ class MockSchemaCache:
             return self._schemas[database]
         raise SchemaNotReadyError(f"Schema for {database} not ready")
 
-    async def refresh(self, database: str | None = None) -> None:
+    async def refresh(self, database: Optional[str] = None) -> None:
         pass
 
 

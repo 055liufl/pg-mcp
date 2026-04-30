@@ -20,6 +20,8 @@ import pytest
 from mcp import McpError
 from pydantic import ValidationError
 
+pytestmark = pytest.mark.e2e
+
 from pg_mcp.config import Settings
 from pg_mcp.engine.orchestrator import QueryEngine
 from pg_mcp.models.errors import DbNotFoundError, SqlUnsafeError
@@ -51,13 +53,13 @@ def _make_settings(**overrides: object) -> Settings:
 
 
 def _make_engine(
-    sql_gen: MockSqlGenerator | None = None,
-    sql_val: MockSqlValidator | None = None,
-    sql_exec: MockSqlExecutor | None = None,
-    cache: MockSchemaCache | None = None,
-    db_inf: MockDbInference | None = None,
-    result_val: MockResultValidator | None = None,
-    settings: Settings | None = None,
+    sql_gen: Optional[MockSqlGenerator] = None,
+    sql_val: Optional[MockSqlValidator] = None,
+    sql_exec: Optional[MockSqlExecutor] = None,
+    cache: Optional[MockSchemaCache] = None,
+    db_inf: Optional[MockDbInference] = None,
+    result_val: Optional[MockResultValidator] = None,
+    settings: Optional[Settings] = None,
 ) -> QueryEngine:
     sample_schema = DatabaseSchema(
         database="test_db",

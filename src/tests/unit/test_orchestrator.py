@@ -61,8 +61,8 @@ def _make_engine(
     cache: MockSchemaCache | None = None,
     db_inf: MockDbInference | None = None,
     result_val: MockResultValidator | None = None,
-    retriever: SchemaRetriever | None = None,
-    settings: Settings | None = None,
+    retriever: Optional[SchemaRetriever] = None,
+    settings: Optional[Settings] = None,
 ) -> QueryEngine:
     sample_schema = DatabaseSchema(
         database="test_db",

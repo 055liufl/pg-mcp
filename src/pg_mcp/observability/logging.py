@@ -33,3 +33,8 @@ def configure_logging(log_level: str) -> None:
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
+
+
+def get_logger():
+    """Get a structlog logger instance."""
+    return structlog.get_logger()

@@ -11,7 +11,7 @@ Covers:
 from __future__ import annotations
 
 import os
-from typing import Generator
+from typing import Optional, Generator
 
 import pytest
 from pydantic import ValidationError
@@ -33,7 +33,7 @@ def clear_env_vars() -> Generator[None, None, None]:
         "PG_PORT",
         "LOG_LEVEL",
     ]
-    original: dict[str, str | None] = {}
+    original: dict[str, Optional[str]] = {}
     for key in keys:
         original[key] = os.environ.get(key)
         os.environ.pop(key, None)

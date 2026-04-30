@@ -49,7 +49,7 @@ def executor(settings: Settings) -> SqlExecutor:
     return SqlExecutor(pool_mgr, settings)
 
 
-def _make_mock_pool(records: list[dict] | None = None) -> MagicMock:
+def _make_mock_pool(records: Optional[list[dict]] = None) -> MagicMock:
     mock_pool = MagicMock()
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock(return_value="SET")

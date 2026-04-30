@@ -27,6 +27,8 @@ from pg_mcp.models.schema import ColumnInfo, DatabaseSchema, TableInfo
 from pg_mcp.schema.cache import SchemaCache
 from pg_mcp.schema.state import SchemaState
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def settings() -> Settings:
@@ -114,7 +116,7 @@ class TestSingleflight:
             sample_schema.model_dump_json().encode("utf-8")
         )
         # First call: state=READY, data present
-        async def mock_get(key: str) -> bytes | None:
+        async def mock_get(key: str) -> Optional[bytes]:
             if "state" in key:
                 return b"ready"
             if "schema" in key:
@@ -163,9 +165,9 @@ class TestCacheMiss:
         mock_redis: AsyncMock,
         sample_schema: DatabaseSchema,
     ) -> None:
-        states: list[str | None] = [None]
+        states: list[Optional[str]] = [None]
 
-        async def track_state(key: str) -> bytes | None:
+        async def track_state(key: str) -> Optional[bytes]:
             if "state" in key:
                 return states[0].encode() if states[0] else None
             return None
@@ -200,7 +202,7 @@ class TestRefresh:
             sample_schema.model_dump_json().encode("utf-8")
         )
         # Start with READY state and cached data
-        async def mock_get(key: str) -> bytes | None:
+        async def mock_get(key: str) -> Optional[bytes]:
             if "state" in key:
                 return b"ready"
             if "schema" in key:
@@ -271,7 +273,7 @@ class TestStateMachine:
         mock_redis: AsyncMock,
         sample_schema: DatabaseSchema,
     ) -> None:
-        state_log: list[str | None] = []
+        state_log: list[Optional[str]] = []
 
         async def track_set(key: str, value: bytes | str, **kwargs: object) -> bool:
             if "state" in key:
@@ -301,7 +303,7 @@ class TestStateMachine:
         cache: SchemaCache,
         mock_redis: AsyncMock,
     ) -> None:
-        state_log: list[str | None] = []
+        state_log: list[Optional[str]] = []
 
         async def track_set(key: str, value: bytes | str, **kwargs: object) -> bool:
             if "state" in key:
@@ -400,7 +402,7 @@ class TestCompression:
     ) -> None:
         load_count = 0
 
-        async def mock_get(key: str) -> bytes | None:
+        async def mock_get(key: str) -> Optional[bytes]:
             if "state" in key:
                 return b"ready"
             if "schema" in key:

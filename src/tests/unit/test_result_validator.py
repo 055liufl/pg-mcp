@@ -36,8 +36,8 @@ def _make_settings(**overrides: object) -> Settings:
 
 def _make_result(
     rows: list[list] | None = None,
-    row_count: int | None = None,
-    columns: list[str] | None = None,
+    row_count: Optional[int] = None,
+    columns: Optional[list[str]] = None,
 ) -> ExecutionResult:
     cols = columns or ["id", "name"]
     r = rows or [[1, "Alice"], [2, "Bob"]]
