@@ -725,10 +725,10 @@ def _estimate_result_bytes(rows: list[list], columns: list[str]) -> int:
    - 根据 policy 决定是否包含采样数据
 
 3. **deny_list 处理**：
-   - 格式：`"db.schema.table.column,db.*.*.*"`
-   - 通配符 `*` 匹配任意层级
+   - **支持格式**（仅 database 级别）：`"db1,db2,*"`
+   - 通配符 `*` 匹配任意数据库（全局禁用验证数据外发）
    - 命中时强制降级为 metadata_only
-   - **策略说明**：deny_list 基于结果元数据（列名）匹配，而非 SQL 解析后的 lineage。对于精确的列级控制，在 `_is_denied()` 中检查 `database` + `columns`；对于粗粒度控制，支持 `db.*` 全库禁用。不追求 SQL lineage 级别的精确匹配（避免复杂解析），以"宁错杀"方式保护敏感数据。
+   - **策略说明**：deny_list 仅支持 database 级别匹配（不追踪 schema/table/column lineage）。`_is_denied()` 检查当前 `database` 是否在 deny_list 中。如果命中，无论查询涉及哪些列，都强制降级为 metadata_only。这是"宁错杀"策略，避免 SQL lineage 解析的复杂性和误判。
 
 4. **PII 掩码**（masked policy）：
    - 简单规则：email 正则替换、手机号替换、身份证替换
@@ -1337,6 +1337,7 @@ class PgMcpServer:
 ```python
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
+from starlette.routing import Route, Mount
 from mcp.server.sse import SseServerTransport
 from contextlib import asynccontextmanager
 
@@ -1348,25 +1349,11 @@ async def lifespan(app: FastAPI):
     # 关闭时由 CLI finally 统一处理，此处不重复关闭
 
 def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
-    app = FastAPI(title="pg-mcp", lifespan=lifespan)
+    """MCP SSE transport 直接使用底层 ASGI 接口，避免与 FastAPI 请求/响应流混合"""
     sse_transport = SseServerTransport("/messages")
 
-    @app.get("/health")
-    async def health() -> dict:
-        return {"status": "ok"}
-
-    @app.post("/admin/refresh")
-    async def refresh_schema(database: str | None = None) -> dict:
-        result = await cache.refresh(database)
-        return {
-            "succeeded": result.succeeded,
-            "failed": result.failed,
-        }
-
-    @app.get("/sse")
-    async def sse_endpoint(request: Request) -> Response:
-        # Starlette Request 封装 ASGI scope/receive/send，
-        # _send 是底层 ASGI send callable，MCP SDK SSE 传输需要此接口
+    async def handle_sse(request: Request) -> Response:
+        """SSE 连接端点：建立 MCP 会话流"""
         async with sse_transport.connect_sse(
             request.scope, request.receive, request._send
         ) as (read_stream, write_stream):
@@ -1375,12 +1362,14 @@ def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
             )
         return Response(status_code=200)
 
-    @app.post("/messages")
-    async def messages_endpoint(request: Request) -> Response:
-        return await sse_transport.handle_post_message(
-            request.scope, request.receive, request._send
-        )
+    # 使用 Starlette Route/Mount 直接挂载 MCP transport，避免 FastAPI handler 响应流干扰
+    routes = [
+        Route("/health", endpoint=lambda _: Response('{"status":"ok"}', media_type="application/json")),
+        Route("/sse", endpoint=handle_sse),
+        Mount("/messages", app=sse_transport.handle_post_message),
+    ]
 
+    app = FastAPI(title="pg-mcp", lifespan=lifespan, routes=routes)
     return app
 ```
 
