@@ -165,18 +165,20 @@ class RateLimitedError(PgMcpError): code = ErrorCode.E_RATE_LIMITED
 from pydantic import field_validator
 
 class QueryRequest(BaseModel):
-    query: str = Field(..., min_length=1, max_length=2000)
+    query: str = Field(default="", min_length=0, max_length=2000)
     database: str | None = None
     return_type: Literal["sql", "result"] = "result"
     admin_action: Literal["refresh_schema"] | None = None
 
-    @field_validator("query")
-    @classmethod
-    def _strip_and_check_whitespace(cls, v: str) -> str:
-        stripped = v.strip()
-        if not stripped:
-            raise ValueError("query cannot be whitespace-only")
-        return stripped
+    @model_validator(mode="after")
+    def _check_query_or_admin(self) -> "QueryRequest":
+        # admin_action 模式下 query 可为空；否则必须非空非纯空白
+        if not self.admin_action:
+            stripped = self.query.strip()
+            if not stripped:
+                raise ValueError("query is required when admin_action is not set")
+            self.query = stripped
+        return self
 ```
 
 **文件**: `pg_mcp/models/response.py`
@@ -226,9 +228,30 @@ class QueryResponse(BaseModel):
 
 - `SecretStr` 用于 `pg_password` 和 `openai_api_key`
 - 添加验证器：`pg_user` 和 `pg_password` 不能为空字符串
-- `pg_databases` 解析：逗号分隔字符串 → `list[str]`，空字符串表示自动发现
+- `pg_databases` 解析：逗号分隔字符串 → `list[str]`，空列表表示自动发现
 - `pg_exclude_databases` 解析：逗号分隔字符串 → `list[str]`
 - `validation_deny_list` 解析：逗号分隔字符串 → `list[str]`
+
+```python
+from pydantic import field_validator
+
+class Settings(BaseSettings):
+    # ... 其他字段 ...
+    pg_databases: str = ""                          # 原始环境变量值
+    pg_exclude_databases: str = "template0,template1,postgres"
+    validation_deny_list: str = ""
+
+    @field_validator("pg_databases", "pg_exclude_databases", "validation_deny_list")
+    @classmethod
+    def _parse_comma_list(cls, v: str) -> list[str]:
+        if not v:
+            return []
+        return [item.strip() for item in v.split(",") if item.strip()]
+
+    @property
+    def pg_databases_list(self) -> list[str]:
+        return self._parse_comma_list(self.pg_databases)
+```
 
 **验收标准**:
 - [ ] 环境变量覆盖默认值
@@ -607,15 +630,19 @@ Mock `AsyncOpenAI` 的 `chat.completions.create`：
 
 3. **只读事务**：`async with conn.transaction(readonly=True)`
 
-4. **LIMIT 注入**（**外层强制包裹，不可绕过**）：
+4. **LIMIT 注入**（**外层强制包裹，不可绕过，EXPLAIN 豁免**）：
    ```python
-   def _apply_limit(self, sql: str) -> str:
-       """始终在外层包裹 LIMIT，防止 LLM 注入超大 LIMIT 绕过"""
+   def _apply_limit(self, sql: str, is_explain: bool = False) -> str:
+       """始终在外层包裹 LIMIT，防止 LLM 注入超大 LIMIT 绕过。EXPLAIN 语句跳过包裹。"""
+       if is_explain:
+           # EXPLAIN 不包裹 LIMIT，直接原样执行
+           return sql.strip().rstrip(";")
        stripped = sql.strip().rstrip(";")
        limit = self._settings.max_rows + 1
        return f"SELECT * FROM ({stripped}) AS __pg_mcp_q LIMIT {limit}"
    ```
-   - 无论原 SQL 是否含 `LIMIT`，都包裹为外层 `SELECT * FROM (...) LIMIT N`
+   - **普通 SELECT**：无论原 SQL 是否含 `LIMIT`，都包裹为外层 `SELECT * FROM (...) LIMIT N`
+   - **EXPLAIN 语句**：跳过 LIMIT 包裹，直接执行原 SQL（validator 返回 `is_explain=True`）
    - 外层 LIMIT 取值为 `min(user_limit, max_rows + 1)`（若用户显式 LIMIT 更小，保留用户值）
    - 返回 `max_rows + 1` 行用于检测是否被截断
    - **AST 层校验**：先用 SQLGlot 解析确认是单条 SELECT，再包裹，避免语法错误
@@ -816,7 +843,7 @@ class QueryEngine:
                 request.query, sql, exec_result, schema
             )
             if verdict.verdict == "fix":
-                # 纳入同一重试状态机：验证反馈 → 重新生成 → 校验 → 执行
+                # 纳入同一重试状态机：验证反馈 → 重新生成 → 校验 → 执行 → 重新验证
                 # 使用独立的 validation_attempt 计数，与 SQL 生成重试共用 max_retries 上限
                 val_feedback = f"Result validation feedback: {verdict.reason}"
                 if verdict.suggested_sql:
@@ -842,6 +869,18 @@ class QueryEngine:
                         raise
                     except asyncpg.PostgresError as e:
                         raise SqlExecuteError(str(e))
+                    # 修正后重新验证结果（递归，但受 max_retries 限制）
+                    if self._result_val.should_validate(sql, exec_result, gen_result):
+                        verdict = await self._result_val.validate(
+                            request.query, sql, exec_result, schema
+                        )
+                        if verdict.verdict == "fix":
+                            if val_attempt < self._settings.max_retries:
+                                val_feedback = f"Fix attempt {val_attempt + 1} result feedback: {verdict.reason}"
+                                continue
+                            raise ValidationFailedError("结果验证反复修正后仍不满足")
+                        elif verdict.verdict == "fail":
+                            raise ValidationFailedError(verdict.reason or "结果验证失败")
                     break
                 else:
                     raise ValidationFailedError("结果验证修正后仍无法生成合法 SQL")
@@ -940,9 +979,8 @@ class ConnectionPoolManager:
     async def discover_databases(self) -> list[str]:
         """发现可访问的数据库列表"""
         # 若配置了 PG_DATABASES，直接使用，跳过发现
-        if self._settings.pg_databases:
-            configured = [d.strip() for d in self._settings.pg_databases.split(",") if d.strip()]
-            return configured
+        if self._settings.pg_databases_list:
+            return list(self._settings.pg_databases_list)
 
         pool = await self.get_pool("postgres")
         async with pool.acquire() as conn:
@@ -1032,26 +1070,30 @@ UNLOADED → LOADING → READY
 ```python
 async def refresh(self, database: str | None = None) -> RefreshResult:
     targets = [database] if database else list(self._databases)
+
+    # 第一步：取消所有旧任务并等待取消完成
     for db in targets:
         await self._set_state(db, SchemaState.UNLOADED)
-        # 取消可能正在进行的旧任务
         async with self._inflight_lock:
-            if db in self._inflight and not self._inflight[db].done():
-                self._inflight[db].cancel()
-                del self._inflight[db]
+            old_task = self._inflight.pop(db, None)
+        if old_task is not None and not old_task.done():
+            old_task.cancel()
+            try:
+                await old_task
+            except asyncio.CancelledError:
+                pass
 
-    # 统一走 singleflight 路径
+    # 第二步：统一走 singleflight 路径启动新加载
     tasks = [self._ensure_loading(db) for db in targets]
     await asyncio.gather(*tasks, return_exceptions=True)
 
-    # 收集结果（基于最终状态）
+    # 第三步：收集结果（基于最终状态）
     succeeded, failed = [], []
     for db in targets:
         state = await self._get_state(db)
         if state == SchemaState.READY:
             succeeded.append(db)
         else:
-            # 从 Redis 获取失败详情（_do_load 应持久化错误信息）
             err = await self._redis.get(f"{self.PREFIX}:error:{db}")
             failed.append({"database": db, "error": err or "unknown"})
 
@@ -1213,12 +1255,12 @@ class PgMcpServer:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Natural language query"},
+                        "query": {"type": "string", "description": "Natural language query (required unless admin_action is set)"},
                         "database": {"type": "string", "description": "Target database name"},
                         "return_type": {"type": "string", "enum": ["sql", "result"]},
                         "admin_action": {"type": "string", "enum": ["refresh_schema"]},
                     },
-                    "required": ["query"],
+                    "required": [],  # query 在 admin_action 模式下可选，由业务层校验
                 },
             )]
 
@@ -1271,34 +1313,53 @@ class PgMcpServer:
 ```python
 from fastapi import FastAPI
 from mcp.server.sse import SseServerTransport
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="pg-mcp")
-sse_transport = SseServerTransport("/messages")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan：启动时资源已就绪，关闭时统一清理"""
+    # 资源在 CLI _run_server() 中创建后传入，此处无需额外初始化
+    yield
+    # 关闭时由 CLI finally 统一处理，此处不重复关闭
 
-@app.get("/health")
-async def health() -> dict:
-    return {"status": "ok"}
+def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
+    app = FastAPI(title="pg-mcp", lifespan=lifespan)
+    sse_transport = SseServerTransport("/messages")
 
-@app.post("/admin/refresh")
-async def refresh_schema(database: str | None = None) -> dict:
-    # 调用 SchemaCache.refresh()
-    ...
+    @app.get("/health")
+    async def health() -> dict:
+        return {"status": "ok"}
 
-@app.get("/sse")
-async def sse_endpoint() -> Response:
-    # SSE 传输端点
-    ...
+    @app.post("/admin/refresh")
+    async def refresh_schema(database: str | None = None) -> dict:
+        result = await cache.refresh(database)
+        return {
+            "succeeded": result.succeeded,
+            "failed": result.failed,
+        }
 
-@app.post("/messages")
-async def messages_endpoint(request: Request) -> Response:
-    # MCP 消息端点
-    ...
+    @app.get("/sse")
+    async def sse_endpoint() -> Response:
+        async with sse_transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as (read_stream, write_stream):
+            await server._server.run(
+                read_stream, write_stream, server._server.create_initialization_options()
+            )
+        return Response(status_code=200)
+
+    @app.post("/messages")
+    async def messages_endpoint(request: Request) -> Response:
+        return await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+
+    return app
 ```
 
 **验收标准**:
 - [ ] `/health` 返回正确
-- [ ] `/admin/refresh` 触发 schema 刷新
+- [ ] `/admin/refresh` 触发 schema 刷新并返回结果
 - [ ] SSE 端点可连接
+- [ ] lifespan 与 CLI 资源生命周期一致
 
 ### 4.4 CLI (`cli.py`)
 
@@ -1314,7 +1375,6 @@ from contextlib import asynccontextmanager
 def main(transport: str) -> None:
     settings = Settings()
     configure_logging(settings.log_level)
-    # 统一单事件循环生命周期
     asyncio.run(_run_server(transport, settings))
 
 async def _run_server(transport: str, settings: Settings) -> None:
@@ -1322,6 +1382,9 @@ async def _run_server(transport: str, settings: Settings) -> None:
     pool_mgr = ConnectionPoolManager(settings)
     redis_client = redis.asyncio.from_url(settings.redis_url)
     cache = SchemaCache(redis_client, pool_mgr, settings)
+
+    # 跟踪后台任务，确保关闭时正确清理
+    bg_tasks: set[asyncio.Task] = set()
 
     try:
         # 发现数据库（若 PG_DATABASES 配置则直接使用）
@@ -1339,27 +1402,37 @@ async def _run_server(transport: str, settings: Settings) -> None:
         engine = QueryEngine(...)
         server = PgMcpServer(engine)
 
-        # 后台预热（在当前事件循环中调度，不阻塞启动）
-        asyncio.create_task(cache.warmup_all())
+        # 后台预热
+        t = asyncio.create_task(cache.warmup_all())
+        bg_tasks.add(t)
+        t.add_done_callback(bg_tasks.discard)
 
-        # 定时刷新任务（在当前事件循环中调度）
+        # 定时刷新任务
         if settings.schema_refresh_interval > 0:
-            asyncio.create_task(cache.run_periodic_refresh())
+            t = asyncio.create_task(cache.run_periodic_refresh())
+            bg_tasks.add(t)
+            t.add_done_callback(bg_tasks.discard)
 
         if transport == "stdio":
             await server.run_stdio()
         else:
-            # SSE 模式：FastAPI lifespan 接管启动/关闭
-            await _run_sse(server, settings)
+            # SSE 模式：传递共享资源给 FastAPI
+            await _run_sse(server, cache, settings)
     finally:
-        # 统一清理
+        # 取消并等待所有后台任务完成
+        for task in bg_tasks:
+            if not task.done():
+                task.cancel()
+        if bg_tasks:
+            await asyncio.gather(*bg_tasks, return_exceptions=True)
+        # 关闭资源
         await pool_mgr.close_all()
         await redis_client.aclose()
 
-async def _run_sse(server: PgMcpServer, settings: Settings) -> None:
+async def _run_sse(server: PgMcpServer, cache: SchemaCache, settings: Settings) -> None:
     import uvicorn
     from pg_mcp.app import create_app
-    app = create_app(server)
+    app = create_app(server, cache)
     config = uvicorn.Config(app, host=settings.sse_host, port=settings.sse_port)
     uvicorn_server = uvicorn.Server(config)
     await uvicorn_server.serve()
@@ -1372,19 +1445,23 @@ async def _run_sse(server: PgMcpServer, settings: Settings) -> None:
 3. 发现数据库清单（PG_DATABASES 覆盖时直接使用）
 4. 只读权限检查
 5. 初始化 QueryEngine + PgMcpServer
-6. 后台预热（asyncio.create_task，不阻塞）
-7. 定时刷新任务（asyncio.create_task）
-8. 启动 MCP Server
-9. 统一 finally 清理所有资源
+6. 后台预热（asyncio.create_task + 跟踪）
+7. 定时刷新任务（asyncio.create_task + 跟踪）
+8. 启动 MCP Server（stdio 或 SSE）
+9. finally: 取消并等待后台任务，关闭 pool 和 Redis
 ```
 
-**关键原则**：所有 async 资源（pool, redis, cache）在同个事件循环内创建和销毁，禁止多次 `asyncio.run()`。
+**关键原则**：
+- 所有 async 资源在同个事件循环内创建和销毁
+- 后台任务通过 `set[asyncio.Task]` 跟踪，`finally` 中先 cancel 再 await
+- SSE 模式共享 CLI 创建的资源（通过 `create_app(server, cache)` 传入）
+- FastAPI lifespan 不重复创建/销毁资源
 
 **验收标准**:
 - [ ] `pg-mcp --transport stdio` 可启动
 - [ ] `pg-mcp --transport sse` 可启动
 - [ ] 所有 async 资源在同个事件循环内生命周期管理
-- [ ] 关闭时正确清理连接池和 Redis
+- [ ] 关闭时先 cancel/await 后台任务，再关闭 pool 和 Redis
 
 ---
 
