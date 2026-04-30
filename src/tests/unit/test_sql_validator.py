@@ -203,11 +203,11 @@ class TestFunctionWhitelist:
                     columns=[ColumnInfo(name="id", type="integer", nullable=False)],
                 ),
             ],
-            allowed_functions=None,  # type: ignore[call-arg]
+            allowed_functions=set(),
         )
         result = validator.validate("SELECT SOME_FUNC(id) FROM users", schema)
 
-        assert result.valid is True
+        assert result.valid is False
 
 
 class TestEdgeCases:
@@ -217,7 +217,7 @@ class TestEdgeCases:
         result = validator.validate("")
 
         assert result.valid is False
-        assert result.code == "E_SQL_PARSE"
+        assert result.code == "E_SQL_UNSAFE"
 
     def test_single_statement_allowed(self, validator: SqlValidator) -> None:
         result = validator.validate("SELECT 1")

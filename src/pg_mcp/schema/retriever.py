@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Set
+
 import re
 from dataclasses import dataclass
 
@@ -37,10 +39,10 @@ _STOPWORDS: set[str] = {
 }
 
 
-type TokenSet = set[str]
+TokenSet = Set[str]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class TableIndex:
     """Precomputed per-table retrieval index.
 

@@ -52,7 +52,7 @@ BLOCKED_NODE_TYPES: tuple[type[exp.Expression], ...] = (
     exp.Delete,
     exp.Create,
     exp.Drop,
-    exp.AlterTable,
+    exp.Alter,
     exp.Grant,
     exp.Command,
 )
@@ -98,7 +98,7 @@ class SqlValidator:
         # 1. Parse
         try:
             parsed = sqlglot.parse(sql, dialect="postgres")
-        except sqlglot.errors.ParseError as e:
+        except (sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
             return ValidationResult(
                 valid=False,
                 code="E_SQL_PARSE",

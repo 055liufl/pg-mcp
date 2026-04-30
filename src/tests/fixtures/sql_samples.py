@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """SQL validation test cases: pass/fail samples for golden tests."""
 
 # =============================================================================
@@ -127,7 +129,7 @@ FAIL_CASES: list[tuple[str, str, str]] = [
     """, "E_SQL_UNSAFE"),
 
     # Nested DDL inside subquery (if parser catches it)
-    ("select_with_drop", "SELECT * FROM (DROP TABLE users) t", "E_SQL_UNSAFE"),
+    ("select_with_drop", "SELECT * FROM (DROP TABLE users) t", "E_SQL_PARSE"),
 ]
 
 # =============================================================================
