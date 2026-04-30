@@ -716,7 +716,9 @@ def _estimate_result_bytes(rows: list[list], columns: list[str]) -> int:
    - 检查 SQL 复杂度：JOIN >= 2 个表、含子查询、含窗口函数
    - 结果为空集
    - logprob 低于阈值（如提供）
-   - deny_list 命中 → 强制降级为 metadata_only
+   - deny_list 命中 → 强制降级为 metadata_only（传入 `database` 和 `columns` 进行匹配）
+
+   **方法签名**：`should_validate(self, database: str, sql: str, result: ExecutionResult, generation: SqlGenerationResult) -> bool`
 
 2. **验证 prompt 构建**：
    - 包含：用户问题、SQL、结果元信息（列名、行数、类型）
@@ -858,7 +860,7 @@ class QueryEngine:
 
         # 11. 结果验证（可选）
         validation_used = False
-        if self._result_val.should_validate(sql, exec_result, gen_result):
+        if self._result_val.should_validate(database, sql, exec_result, gen_result):
             validation_used = True
             verdict = await self._result_val.validate(
                 request.query, sql, exec_result, schema
@@ -883,6 +885,8 @@ class QueryEngine:
                             val_feedback = f"Fix attempt {val_attempt + 1} rejected: {val_result.reason}"
                             continue
                         raise SqlUnsafeError(val_result.reason or "修正 SQL 安全校验未通过")
+                    # 更新 is_explain（修正后的 SQL 类型可能改变）
+                    is_explain = val_result.is_explain
                     # 重新执行
                     try:
                         exec_result = await self._sql_exec.execute(database, sql, is_explain=is_explain)
@@ -1011,7 +1015,7 @@ class ConnectionPoolManager:
                       SELECT unnest($1::text[])
                   )
                 ORDER BY datname
-            """, self._settings.pg_exclude_databases)
+            """, self._settings.pg_exclude_databases_list)
             return [r["datname"] for r in rows]
 
     async def assert_readonly(self) -> None:
@@ -1331,7 +1335,8 @@ class PgMcpServer:
 **文件**: `pg_mcp/app.py`
 
 ```python
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import Response
 from mcp.server.sse import SseServerTransport
 from contextlib import asynccontextmanager
 
@@ -1360,8 +1365,10 @@ def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
 
     @app.get("/sse")
     async def sse_endpoint(request: Request) -> Response:
+        # Starlette Request 封装 ASGI scope/receive/send，
+        # _send 是底层 ASGI send callable，MCP SDK SSE 传输需要此接口
         async with sse_transport.connect_sse(
-            request.scope, request.receive, request.send
+            request.scope, request.receive, request._send
         ) as (read_stream, write_stream):
             await server._server.run(
                 read_stream, write_stream, server._server.create_initialization_options()
@@ -1370,7 +1377,9 @@ def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
 
     @app.post("/messages")
     async def messages_endpoint(request: Request) -> Response:
-        return await sse_transport.handle_post_message(request.scope, request.receive, request.send)
+        return await sse_transport.handle_post_message(
+            request.scope, request.receive, request._send
+        )
 
     return app
 ```
@@ -1494,7 +1503,7 @@ async def _run_sse(server: PgMcpServer, cache: SchemaCache, settings: Settings) 
 | `test_sql_validator.py` | `sql_validator.py` | 白名单、黑名单、多语句、EXPLAIN、EXPLAIN ANALYZE 拒绝、foreign table、函数名规范化 |
 | `test_db_inference.py` | `db_inference.py` | 单库命中、歧义、无匹配、跨库、未就绪、倒排索引性能 |
 | `test_schema_retriever.py` | `retriever.py` | 关键词匹配、大 schema 检索、外键关联、预计算索引 |
-| `test_config.py` | `config.py` | 环境变量覆盖、默认值、SecretStr、PG_DATABASES 解析 |
+| `test_config.py` | `config.py` | 环境变量覆盖、默认值、SecretStr、PG_DATABASES/PG_EXCLUDE_DATABASES/VALIDATION_DENY_LIST 解析 |
 | `test_sanitizer.py` | `sanitizer.py` | SQL 脱敏、PII 掩码 |
 | `test_orchestrator.py` | `orchestrator.py` | 完整流程、错误转换、重试逻辑、结果验证 fix 路径 |
 | `test_result_validator.py` | `result_validator.py` | 触发条件、deny_list、policy 降级、verdict 解析 |
