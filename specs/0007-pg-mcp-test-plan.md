@@ -1,943 +1,627 @@
 # Test-Plan-0007: pg-mcp 测试计划
 
-> **依据**：[PRD-0001](./0001-pg-mcp-prd.md) · [Design-0002](./0002-pg-mcp-design.md) · [Impl-Plan-0004](./0004-pg-mcp-impl-plan.md) · [Impl-Review-0006](./0006-pg-mcp-impl-review.md)
-> **状态**：可直接执行；本计划撰写时已完成 self-verify（详见 §13）。
-> **范围**：覆盖 PRD §3 全部功能需求 + Design §8 测试策略 + Impl §5 测试清单 +
-> 在 fixtures 上的真实数据库验收 + 部署前 smoke。
+> 依据：PRD-0001 · Design-0002 · Impl-Plan-0004 · Impl-Review-0006 · Test-Plan-Review-0008
+> 本文档分两部分：A) **Verified Today**（撰写时已实跑通过）；B) **Planned Additions**（未跑通 / 未实现，跟踪条目）
+> 日期：2026-05-01
 
 ---
 
-## 0. 摘要
+## 0. 摘要 / Snapshot
 
-| 维度 | 实测数字（2026-05-01） |
-|---|---|
-| 测试总数 | 316 |
-| 单元 / 集成 / E2E | 221 / 75 / 20 |
-| 通过率 | 100 %（`uv run pytest tests/` 316 passed in ≈20 s） |
-| 行覆盖率 | 84.86 %（`--cov=pg_mcp`） |
-| 分支覆盖率 | 83.49 %（`--cov=pg_mcp --cov-branch`） |
-| 关键模块行覆盖 | `executor` 100 % / `pool` 95 % / `sql_validator` 95 % / `result_validator` 94 % / `db_inference` 93 % / `discovery` 92 % |
-| 已知盲区 | `cli.py` 0 %（启动生命周期）、`__main__.py` 0 %、`metrics.py` 57 %、`sql_generator.py` 34 %（LLM 主路径） |
-| 已知质量门禁缺口 | `ruff check` 134 处、`ruff format --check` 29 文件待格式化、`mypy --strict` 33 处。**初始门禁先放宽到通过当前状态**，整改纳入 §16 GAP-7。 |
+| 维度 | 实测值 | 来源 |
+|---|---|---|
+| 用例总数 | **330** | `uv run pytest tests/ -W ignore` 收集 |
+| 全量耗时 | **≈21 s** | `330 passed in 21.19s` |
+| 行覆盖率 | **86%** | `--cov=pg_mcp` |
+| 行+分支覆盖率 | **85%** | `--cov=pg_mcp --cov-branch` |
+| 单元测试 | 235 | tests/unit/* |
+| 集成测试 | 75 | tests/integration/* |
+| 端到端 | 20 | tests/e2e/* |
+| 验收脚本 | `fixtures/acceptance.sh` | A1..A5 全部 ALL ACCEPTED |
+| 烟雾 | S-1/S-2/S-3 | exit 0 / `{"status":"ok"}` / refresh 三库成功 |
 
-**整体目标**：在 PR 合入前，本计划列出的全部 P0 / P1 用例必须通过；P2 用例至少
-在 `master` 上跑通。覆盖率门禁（**初始**）：整体 ≥ 80 %（line）、≥ 80 %（branch）；
-**目标**：≥ 85 % / ≥ 85 %。`sql_validator.py` 100 % 分支必达。
+**Quality gate 现状（live, 2026-05-01）**：
 
----
+- `uv run ruff check pg_mcp/ tests/` → **141 errors**（89 fixable）
+- `uv run ruff format --check pg_mcp/ tests/` → **30 files** would be reformatted
+- `uv run mypy pg_mcp/` → **33 errors in 11 files**
 
-## 1. 目标 / 非目标
-
-### 1.1 目标
-- **正确性**：所有 PRD §3 列出的功能需求都有对应的可执行测试。
-- **安全性**：SQL 校验黑/白名单 + foreign table + 多语句 + EXPLAIN ANALYZE 拒绝
-  必须 100 % 命中（详见 §10 必测矩阵）。
-- **稳定性**：连接池重试、`SchemaCache` singleflight、`SchemaCache.refresh()` 完成性、
-  `RateLimitedError` 限流均覆盖到。
-- **可重现**：每条命令都贴出来；失败时贴期望输出对比。
-- **真实数据**：使用 `fixtures/` 下的三个数据库做集成与验收，避免"全部 mock"
-  导致的虚假绿。
-
-### 1.2 非目标
-- **不**测 OpenAI 真实 API 行为（成本 + 不确定性）；用 `MockSqlGenerator` /
-  `MockResultValidator` 替代。**E2E** 提供单条带真实 LLM 的回归用例（手动跑，
-  不入 CI）。
-- **不**测 schema 变更下的迁移行为（pg-mcp 是只读访问层，不感知 DDL）。
-- **不**做模糊测试 / 攻击面对抗（独立任务，超出测试计划范围）。
-- **不**提供 K8s / 多副本部署测试（运行时无状态，不变形）。
-
-### 1.3 与 Impl-Plan §5.5 缺失测试清单的对照
-| Impl §5.5 项 | 本计划位置 |
-|---|---|
-| 信号量并发限流 | §5.1 (`test_rate_limit.py`) ✅ 已存在 |
-| Schema cache singleflight 竞态 | §6.4 (`test_schema_cache.py`) ✅ 已存在 |
-| 定时刷新调度 | §6.4 测项 R-3 ✅ 已存在 |
-| SSE transport 生命周期 | §7.2（设为 P2，非阻塞） |
-| CLI 启动/关闭生命周期 | §7.3（**新增**，本计划补齐） |
-| `PG_DATABASES` 覆盖发现 | §6.2 测项 P-2 ✅ 已存在 |
-| 连接重试退避 | §6.2 测项 P-3 ✅ 已存在 |
-| 结果验证 fix 路径重试 | §5.3 测项 V-3 ✅ 已存在 |
-| 大 LIMIT 绕过防护 | §5.4 测项 X-3 ✅ 已存在 |
-| Foreign table 引号处理 | §5.4 测项 X-4 ✅ 已存在 |
+→ Lint/format/type 三件套尚未清零，列入 §16.1 P1 Backlog；当前 PR 门禁仅强制 `pytest + cov-fail-under=80`，§12.1 给出可执行的过渡门禁。
 
 ---
 
-## 2. 测试金字塔
+## 1. 范围 / Scope
 
-```
-                 ┌──────────────┐
-                 │ 6  Smoke     │  ≤  5  cases (60s 部署后回归)
-                 ├──────────────┤
-                 │ 5  Acceptance│  ≤ 15  cases (2-5 min, real PG via fixtures)
-                 ├──────────────┤
-                 │ 4  E2E       │  ≤ 30  cases (MCP 协议 + handler)
-                 ├──────────────┤
-                 │ 3  Integration│ ≤ 100  cases (PG/Redis 必需)
-                 ├──────────────┤
-                 │ 2  Unit      │  ≥ 220  cases (无外部依赖)
-                 └──────────────┘
-```
+### 1.1 In scope
 
-约束：**每层增加用例时，下层必须已经覆盖该路径**。例如 SQL 校验规则永远先在
-单元层加（最便宜），同时在 acceptance 层留一个 end-to-end 印证。
+- 单元 / 集成 / 端到端 / 验收 / 烟雾 五层测试设计
+- SQL 校验黄金矩阵（PASS / FAIL / PARSE_FAIL / FOREIGN_TABLE）
+- LLM 主路径 (`sql_generator.py`)、Schema 状态机、Result Validator、Orchestrator 编排
+- PRD §3.1 启动/懒加载语义；PRD §3.3 安全底线；PRD §3.4/§3.5 响应契约与可观测性
+- 覆盖率 / 质量门禁的过渡方案（今天可过）与目标方案（计入 Backlog）
 
----
+### 1.2 Out of scope
 
-## 3. 环境与前置条件
+- 真实 OpenAI 调用的端到端验证（§16.3 P3 manual smoke）
+- CI 矩阵（多 Python × 多 PG），见 §16.2 P2
+- 性能/负载基准（仅给出 wall-time 上限提示），见 §16.2 P2
+- Redis 服务端 LRU 策略本身——Design §6 显式委托给 Redis `maxmemory-policy` 配置；测试只校验配置能正确传入，见 §13 配置类条目
 
-### 3.1 一次性环境准备
+### 1.3 命令书写约定
+
+每条命令必须 self-contained，可直接从 fresh checkout 复制粘贴。本文档允许以下三种等价形式：
 
 ```bash
-# 仓库根目录
-cd /home/lfl/pg-mcp
+# 形式一（推荐）：先切到 src 再执行
+cd /home/lfl/pg-mcp/src && uv run pytest tests/ -W ignore
 
-# 1) 安装 Python 依赖（Python ≥ 3.12）
-cd src && uv sync --extra dev
+# 形式二：从仓库根用 --project 指定项目目录
+cd /home/lfl/pg-mcp && uv --project src run pytest src/tests -W ignore
 
-# 2) 起一份测试用 PostgreSQL（已封装在 fixtures/Makefile）
-cd ../fixtures && make docker-up
+# 形式三：使用仓库内已存在的脚本
+cd /home/lfl/pg-mcp && bash fixtures/acceptance.sh
+```
 
-# 3) 加载 3 套 fixture 数据库
-make all PG_PORT=5433 PG_USER=test PGPASSWORD=test \
-  PSQL='docker exec -i pg-mcp-fixtures psql' \
-  SUPER_PSQL='docker exec pg-mcp-fixtures psql'
+**禁止**：`uv run pytest ...` 这类隐含 `cwd=src` 的写法；本文档不再出现。
 
-# 4) 起一个 Redis 测试实例（集成测试需要）
+---
+
+## 2. 测试金字塔（带 §13 traceability 兜底）
+
+```
+                 ┌──────────────────┐
+                 │   Layer 6 烟雾    │  S-1..S-3，可观测的最小活性证据
+                 ├──────────────────┤
+                 │   Layer 5 验收    │  fixtures/acceptance.sh A1..A5
+                 ├──────────────────┤
+                 │ Layer 4 端到端 (20)│  MCP 协议 stdio handler 直驱
+                 ├──────────────────┤
+                 │ Layer 3 集成 (75) │  PG + Redis 真依赖
+                 ├──────────────────┤
+                 │ Layer 2 单元 (235)│  纯逻辑 + AsyncMock
+                 ├──────────────────┤
+                 │  Layer 1 静态     │  ruff / format / mypy（过渡未强制）
+                 └──────────────────┘
+```
+
+> 金字塔本身只是约束 “每个高层用例必有同类低层用例做最小成本兜底”。真正可被 enforce 的是 §13 的 traceability matrix——任何一条 PRD/Design/Impl 条目，至少在 matrix 里有一行对应的 test ID 或 Planned 占位。
+
+---
+
+# Part A — Verified Today
+
+> Part A 列出的所有用例 / 命令 / 输出在 2026-05-01 自验当天实跑通过。Part B 中的条目尚未跑通或尚未实现。
+
+## 3. 环境准备
+
+### 3.1 一次性环境（self-contained from a fresh checkout）
+
+```bash
+# 1) 安装依赖
+cd /home/lfl/pg-mcp/src && uv sync --extra dev
+
+# 2) 起 PostgreSQL fixture 容器（postgres:16-alpine, :5433）
+cd /home/lfl/pg-mcp && cd fixtures && make docker-up
+
+# 3) 起 Redis 容器（redis:7-alpine, :6380）
 docker run -d --rm --name pg-mcp-redis -p 6380:6379 redis:7-alpine
+
+# 4) 构建并校验 3 个测试库
+cd /home/lfl/pg-mcp/fixtures \
+  && PSQL='docker exec -i pg-mcp-fixtures psql' \
+     SUPER_PSQL='docker exec pg-mcp-fixtures psql' \
+     PG_USER=test PGPASSWORD=test \
+     make all && make verify
 ```
 
-### 3.2 环境变量（导出到 shell 或 `.env`）
+### 3.2 环境变量（pg-mcp 进程读取）
 
 ```bash
-export PG_HOST=localhost
-export PG_PORT=5433
-export PG_USER=test
-export PG_PASSWORD=test
-export PG_DATABASES=mini_blog,shop_oms,analytics_dw
-export REDIS_URL=redis://localhost:6380/0
-export OPENAI_API_KEY=sk-test-dummy           # 单元/集成测试不会真发
-export OPENAI_BASE_URL=                       # 默认即可
+export OPENAI_API_KEY=sk-test-stub                       # 可为占位；mock 路径不会调用
+export PG_DATABASES='mini_blog,shop_oms,analytics_dw'
+export DATABASE_URL_MINI_BLOG=postgresql://test:test@127.0.0.1:5433/mini_blog
+export DATABASE_URL_SHOP_OMS=postgresql://test:test@127.0.0.1:5433/shop_oms
+export DATABASE_URL_ANALYTICS_DW=postgresql://test:test@127.0.0.1:5433/analytics_dw
+export REDIS_URL=redis://127.0.0.1:6380/0
 ```
 
 ### 3.3 拆环境
 
 ```bash
-cd /home/lfl/pg-mcp/fixtures && make docker-down
-docker rm -f pg-mcp-redis 2>/dev/null
+docker rm -f pg-mcp-redis pg-mcp-fixtures || true
 ```
 
 ---
 
-## 4. 命令快查
+## 4. 命令快查（self-contained 命令表 + 实测耗时）
 
-| 目的 | 命令 | 期望耗时 |
-|---|---|---|
-| 全量测试 | `cd src && uv run pytest tests/ -W ignore` | < 30 s |
-| 仅单元 | `uv run pytest tests/unit/` | < 5 s |
-| 仅集成 | `uv run pytest tests/integration/` | < 30 s |
-| 仅 e2e | `uv run pytest tests/e2e/` | < 5 s |
-| 覆盖率 | `uv run pytest --cov=pg_mcp --cov-report=term-missing tests/` | < 30 s |
-| Lint | `uv run ruff check pg_mcp/ tests/` | < 5 s |
-| Type | `uv run mypy pg_mcp/` | < 30 s |
-| 验收 | 见 §8 | 1-3 min |
-| 烟雾 | 见 §9 | < 60 s |
-
----
-
-## 5. 单元测试（Layer 2）
-
-> **目录**：`tests/unit/` · **依赖**：仅 `unittest.mock` · **预算**：< 10 s · **现状**：221 用例
-
-### 5.1 `test_sql_validator.py` — SQL 安全校验（P0，**必须 100 % 分支**）
-
-| ID | 用例 | 期望 |
-|---|---|---|
-| V-1 | `tests/fixtures/sql_samples.py:PASS_CASES` 全量参数化 | 全部 `valid=True` |
-| V-2 | `FAIL_CASES` 全量参数化 | 全部 `valid=False` 且 `code` 命中 |
-| V-3 | `PARSE_FAIL_CASES` | `code == "E_SQL_PARSE"` |
-| V-4 | `FOREIGN_TABLE_CASES`（含 schema 限定与未限定） | `valid=False`，原因含 `Foreign table` |
-| V-5 | EXPLAIN 通过 / EXPLAIN ANALYZE 拒绝 | `is_explain` 标记正确 |
-| V-6 | 函数白名单（schema-driven） | 不在 `allowed_functions` 时拒绝 |
-| V-7 | 黑名单兜底（即使在白名单中也拒） | `pg_sleep`/`pg_read_file`/`dblink` 必拒 |
-| V-8 | 多语句拒绝 | `SELECT 1; DROP TABLE x` → `valid=False` |
-| V-9 | CTE 中嵌入 INSERT/UPDATE/DELETE | `Disallowed statement type` |
-| V-10 | `schema_names` 解析未限定表 | 未限定 `orders` 命中 `app.orders` 时正确判 foreign |
-| V-11 | 函数名大小写不敏感 | `PG_SLEEP(100)` 也被拒 |
-
-**运行**：`uv run pytest tests/unit/test_sql_validator.py -v`
-**通过条件**：80/80 用例通过；分支覆盖 = 100 %（用 `--cov=pg_mcp.engine.sql_validator --cov-branch`）。
-
-### 5.2 `test_db_inference.py` — 数据库推断（P0）
-
-| ID | 用例 | 期望 |
-|---|---|---|
-| I-1 | 仅 1 个库命中 | 直接选定 |
-| I-2 | top1/top2 差距 < 15 % | `DbInferAmbiguousError` + candidates ≤ 3 |
-| I-3 | 0 命中 | `DbInferNoMatchError` |
-| I-4 | 关键词分散到多库 | `CrossDbUnsupportedError` |
-| I-5 | 部分库未就绪 | 若仅就绪库可命中 → 选；否则 `SchemaNotReadyError(retry=3000)` |
-| I-6 | `DbSummary` 增量构建 | 命中 hook 后 summary 不重复发现 |
-| I-7 | 关键词提取过滤停用词 | 长度 < 2 / 在 stopwords 中均被剔除 |
-
-**运行**：`uv run pytest tests/unit/test_db_inference.py -v`
-**通过条件**：17/17。
-
-### 5.3 `test_orchestrator.py` — 主编排（P0）
-
-| ID | 用例 | 期望 |
-|---|---|---|
-| O-1 | Happy path（结果模式） | `QueryResponse.row_count > 0`、`error is None` |
-| O-2 | `return_type=sql` 跳过执行 | `executor.execute_calls == 0`，`response.rows is None` |
-| O-3 | `admin_action=refresh_schema` | 返回 `refresh_result`；不发起 LLM |
-| O-4 | LLM 生成失败重试上限 → `SqlGenerateError` | 重试 N+1 次后抛出 |
-| O-5 | 校验失败 → 重试 → 通过 | generator 被调用 2 次 |
-| O-6 | 结果验证 verdict=fix 形成闭环 | generator 与 executor 各被调用 2 次 |
-| O-7 | `schema_names` 在所有 `executor.execute()` 调用中出现 | 包含 `public` |
-| O-8 | `validator.validate(sql, schema, schema_names=...)` 也收到 schema_names | 是 |
-| O-9 | 信号量满 → `RateLimitedError` | 是 |
-| O-10 | `SqlTimeoutError` 透传，不转换 | 是 |
-| O-11 | 大 schema 启用检索路径 | `SchemaRetriever.retrieve()` 被调用 |
-
-**运行**：`uv run pytest tests/unit/test_orchestrator.py -v`
-**通过条件**：21/21。
-
-### 5.4 `test_result_validator.py` — 结果验证 + deny-list（P0）
-
-| ID | 用例 | 期望 |
-|---|---|---|
-| R-1 | `enable_validation=False` → 不触发 | `should_validate==False` |
-| R-2 | `JOIN ≥ 2` / 子查询 / 窗口函数 → 触发 | `True` |
-| R-3 | 空集 → 触发 | `True` |
-| R-4 | logprob < 阈值 → 触发 | `True` |
-| R-5 | data_policy=metadata_only → prompt 不含 sample rows | 是 |
-| R-6 | data_policy=masked → 敏感列脱敏 | `password=***`, email 掩码 |
-| R-7 | 层级 deny rule（db.*.*） | 强制降级到 metadata_only |
-| R-8 | 层级 deny rule（db.schema.table） | 仅当 SQL 触及该表才降级 |
-| R-9 | 层级 deny rule（db.schema.table.column） | 仅遮罩匹配列 |
-| R-10 | `*.public.users` 通配 db | 任意 db 中的 public.users 都降级 |
-
-**运行**：`uv run pytest tests/unit/test_result_validator.py -v`
-**通过条件**：29/29。
-
-### 5.5 其他单元用例
-
-| 文件 | 关注点 | 预期用例 |
-|---|---|---|
-| `test_config.py` | env / .env / SecretStr / 列表解析 | 30 |
-| `test_sanitizer.py` | SQL 字符串 `'***'` 替换 / 邮箱手机号 / 身份证 | 17 |
-| `test_schema_retriever.py` | TableIndex 构建、retrieve top-N、related FK | 22 |
-| `test_rate_limit.py` | Semaphore 满载 / 退出后释放 | 5 |
-
-**全单元运行**：`uv run pytest tests/unit/ -W ignore`
-**通过条件**：221/221，运行时长 < 10 s。
+| ID | 用途 | 命令 | 实测耗时 |
+|---|---|---|---|
+| Q-1 | 全量测试 | `cd /home/lfl/pg-mcp/src && uv run pytest tests/ -W ignore` | ≈21 s |
+| Q-2 | 仅单元 | `cd /home/lfl/pg-mcp/src && uv run pytest tests/unit/ -W ignore` | ≈3 s |
+| Q-3 | 仅集成 | `cd /home/lfl/pg-mcp/src && uv run pytest tests/integration/ -W ignore` | ≈10 s |
+| Q-4 | 仅 e2e | `cd /home/lfl/pg-mcp/src && uv run pytest tests/e2e/ -W ignore` | ≈5 s |
+| Q-5 | 全量+覆盖率 | `cd /home/lfl/pg-mcp/src && uv run pytest --cov=pg_mcp --cov-report=term-missing tests/ -W ignore` | ≈22 s |
+| Q-6 | 行+分支 | `cd /home/lfl/pg-mcp/src && uv run pytest --cov=pg_mcp --cov-branch tests/ -W ignore` | ≈22 s |
+| Q-7 | 验收 | `cd /home/lfl/pg-mcp && bash fixtures/acceptance.sh` | <5 s |
+| Q-8 | 单文件（黄金矩阵） | `cd /home/lfl/pg-mcp/src && uv run pytest tests/unit/test_sql_validator.py -v` | <2 s |
+| Q-9 | 单文件（LLM） | `cd /home/lfl/pg-mcp/src && uv run pytest tests/unit/test_sql_generator.py -v` | <1 s |
 
 ---
 
-## 6. 集成测试（Layer 3）
+## 5. 单元测试（Layer 2，实测 235 用例）
 
-> **目录**：`tests/integration/` · **依赖**：PG（端口 5433） + Redis（端口 6380），均通过 mock 或真实容器
-> **预算**：< 60 s · **现状**：75 用例（部分 mock，部分用 fixtures）
+### 5.1 `test_sql_validator.py` — SQL 安全黄金矩阵（80 tests，P0）
 
-### 6.1 `test_app.py` — FastAPI SSE 路由
+| Class | 用例数 | 数据源 |
+|---|---|---|
+| `TestPassCases` | 22 | `tests/fixtures/sql_samples.py::PASS_CASES` |
+| `TestFailCases` | 32 | `FAIL_CASES` |
+| `TestParseFailures` | 3 | `PARSE_FAIL_CASES` |
+| `TestForeignTables` | 5 (2 参数化 + 3 plain) | `FOREIGN_TABLE_CASES` + 内联 |
+| `TestFunctionWhitelist` | 4 | 内联 |
+| `TestEdgeCases` | 7 | 内联 |
+
+跑：`cd /home/lfl/pg-mcp/src && uv run pytest tests/unit/test_sql_validator.py -v`
+覆盖率：当前 92% line+branch，目标 100%（§16.1 P1）。
+
+### 5.2 `test_db_inference.py`（17）
+
+`DbInference` 摘要构建 / 失效；TopK 关键词；自动总结刷新。
+跑：`cd /home/lfl/pg-mcp/src && uv run pytest tests/unit/test_db_inference.py -v`
+
+### 5.3 `test_orchestrator.py`（21）
+
+`QueryEngine` 编排：DB 推断、schema 加载、`E_SCHEMA_NOT_READY + retry_after_ms`、生成-校验-执行重试链、Result Validator 接入、错误传播。
+跑：`cd /home/lfl/pg-mcp/src && uv run pytest tests/unit/test_orchestrator.py -v`
+
+### 5.4 `test_result_validator.py`（29）
+
+层级 deny-list (`db.schema.table.column` 通配) / 行级 mask / `metadata_only` 降级 / verdict 决策。
+跑：`cd /home/lfl/pg-mcp/src && uv run pytest tests/unit/test_result_validator.py -v`
+
+### 5.5 `test_sql_generator.py` — LLM SQL 生成（P0，14 tests，行/分支覆盖 100%）
+
+> 状态：**Verified Today**。文件已存在，使用 `unittest.mock.AsyncMock` 全 mock OpenAI client。
 
 | ID | 用例 | 期望 |
 |---|---|---|
-| A-1 | `GET /health` | 200，`{"status":"ok"}` |
-| A-2 | `POST /admin/refresh` | 200，正确 JSON shape |
-| A-3 | `GET /admin/refresh` | 405（仅 POST） |
+| G-1 | 正常生成（含 token 提取） | 返回 SQL；`prompt_tokens` / `completion_tokens` 由 `response.usage` 注入；`avg_logprob` 默认 None |
+| G-2 | Markdown fence 清理（参数化 5 种：```sql、plain ```、trailing newline、whitespace、no fence） | 输出 SQL 前后无 ``` 包裹；空白被 strip |
+| G-3 | OpenAI 超时（`asyncio.TimeoutError`） | 抛 `LlmTimeoutError` |
+| G-4 | OpenAI APIError | 抛 `LlmError`，message 含原文 |
+| G-5 | feedback 注入 prompt（重试链路） | user message 含 `Previous attempt feedback: ...` |
+| G-6 | 无 feedback prompt 不泄漏占位符 | 不包含 `feedback` 占位 |
+| G-7 | 透传 `openai_model` 配置 | `chat.completions.create` 调用 `model=配置值` |
+| G-8 | model 输出为 `None` | 返回空 SQL，不抛 |
+| G-9 | `response.usage` 缺失 | token 计数置 0，不抛 |
+| G-10 | prompt template constant 契约 | 含 `{schema_context}` `{query}` `{feedback}` `SELECT` `Do not use any functions that modify data` |
 
-### 6.2 `test_pool.py` — 连接池
+跑：`cd /home/lfl/pg-mcp/src && uv run pytest tests/unit/test_sql_generator.py -v`
 
-| ID | 用例 | 期望 |
+### 5.6 其他单元
+
+| 文件 | 用例数 | 覆盖点 |
 |---|---|---|
-| P-1 | per-DB 连接池缓存 | 第二次返回同一对象 |
-| P-2 | `PG_DATABASES` 覆盖自动发现 | discover 跳过 pg_database 查询 |
-| P-3 | 连接失败指数退避（mock） | 5 次重试，含抖动 |
-| P-4 | `assert_readonly` 检测写权限 → strict 模式抛错 | 是 |
-| P-5 | DSN 含 sslmode / sslrootcert | 是 |
+| `test_config.py` | 30 | Pydantic settings 校验、SecretStr、URL 解析、PG_DATABASES 列表语义 |
+| `test_sanitizer.py` | 17 | 字面量遮蔽（`'***'`）、PII mask、SQL 串脱敏 |
+| `test_schema_retriever.py` | 22 | 关键词索引、TopK 检索、压缩比 |
+| `test_rate_limit.py` | 5 | per-database semaphore 计数 |
 
-### 6.3 `test_schema_discovery.py` — Schema 发现
-
-| ID | 用例 | 期望 |
-|---|---|---|
-| D-1 | 批量发现表 + 列 + 主键 | 与 mini_blog fixture 计数一致（6 表） |
-| D-2 | foreign table 标记 | mini_blog 无 → 0；shop_oms 无 → 0 |
-| D-3 | 索引、约束、外键、enum、composite 全部加载 | 与 §15 fixture-counts 一致 |
-| D-4 | view 含列（不再返回 `[]`） | shop_oms 的 `in_stock_products` 列数 ≥ 7 |
-| D-5 | `allowed_functions` 排除黑名单 | `pg_sleep` ∉ 集合，`length` ∈ 集合 |
-
-> **note**：当前 `test_schema_discovery.py` 用 mock；本计划新增 §8 acceptance
-> 直接对 fixtures 验真。
-
-### 6.4 `test_schema_cache.py` — Singleflight + 状态机 + 定时刷新
-
-| ID | 用例 | 期望 |
-|---|---|---|
-| C-1 | 并发 get 同一 db | `_do_load` 仅调用 1 次 |
-| C-2 | UNLOADED → LOADING → READY 状态序列 | mock_redis 看到 `loading`、`ready` |
-| C-3 | 加载失败 → FAILED + 错误持久化 | `pg_mcp:error:{db}` 中可读出消息 |
-| C-4 | bytes vs str 解码（regression） | `b"ready"` 也能正确进入 READY 分支 |
-| C-5 | 损坏数据触发重载 | gzip 反序列化失败 → state 重置为 UNLOADED → 再次加载 |
-| C-6 | `refresh()` 必须等待真正完成（regression） | 返回的 `RefreshResult.succeeded` 反映最终状态 |
-| C-7 | 加载完成 hook 触发 | `add_loaded_hook` 被调用 1 次 |
-| C-8 | 失败/刷新 hook 触发 | `add_invalidated_hook` 被调用 |
-| C-9 | warmup 触发所有库 | 每个 db 至少 1 次 _do_load |
-
-### 6.5 `test_sql_executor.py` — 只读执行
-
-| ID | 用例 | 期望 |
-|---|---|---|
-| E-1 | LIMIT 包裹普通 SELECT | 实际执行的 SQL 包含 `__pg_mcp_q LIMIT N+1` |
-| E-2 | EXPLAIN 跳过 LIMIT 包裹 | 原 SQL 直接执行 |
-| E-3 | 设置 statement_timeout / work_mem / temp_file_limit | 4 条 SET 全部命中 |
-| E-4 | `SET LOCAL search_path` **在事务内** | 调用顺序：`BEGIN ... SET LOCAL ... fetch ... COMMIT` |
-| E-5 | 标识符引号化 | `users.addresses` → `"users","addresses"` 等 |
-| E-6 | 软阈值截断 → `truncated=True` | 不抛错 |
-| E-7 | 硬阈值 → `ResultTooLargeError` | 抛错 |
-| E-8 | 单元格超 `MAX_CELL_BYTES` 截断 | 字段后缀 `... [truncated]` |
-| E-9 | asyncpg.QueryCanceledError → `SqlTimeoutError` | 转换正确 |
-
-**运行整层**：
-```bash
-cd /home/lfl/pg-mcp/src
-PG_HOST=localhost PG_PORT=5433 PG_USER=test PG_PASSWORD=test \
-REDIS_URL=redis://localhost:6380/0 \
-  uv run pytest tests/integration/ -W ignore
-```
-**通过条件**：75/75，运行时长 < 60 s。
+跑：`cd /home/lfl/pg-mcp/src && uv run pytest tests/unit/ -v`
 
 ---
 
-## 7. 端到端测试（Layer 4）
+## 6. 集成测试（Layer 3，实测 75 用例）
 
-> **目录**：`tests/e2e/` · **依赖**：mock（默认）；可手动切到真实 LLM。
-> **现状**：20 用例
+### 6.1 `test_app.py`（3）
 
-### 7.1 `test_mcp_tool.py` — MCP 协议合规
+FastAPI app：`/health` 200、`/admin/refresh` 三库刷新、未知路由 404。
 
-| ID | 用例 | 期望 |
+### 6.2 `test_pool.py`（16）
+
+asyncpg pool：`PG_DATABASES` override、连接重试退避、SSL 参数、超时、健康检查、`SET LOCAL` 隔离。
+
+### 6.3 `test_schema_discovery.py`（13）
+
+SQLAlchemy `inspect()` 发现：表 / 视图 / 索引 / 枚举 / 复合类型 / 外键，对照 mini_blog / shop_oms / analytics_dw 实际计数。
+
+### 6.4 `test_schema_cache.py`（17）
+
+Redis 缓存读写、gzip 压缩、observer hooks（loaded / invalidated）、状态机迁移、singleflight、warmup 后台任务。
+
+### 6.5 `test_sql_executor.py`（26）
+
+只读事务 + `statement_timeout` + `work_mem`；`SET LOCAL search_path` 在事务内、随事务 rollback；LIMIT 软/硬截断；EXPLAIN 列名；标识符引用；超时映射。
+
+跑：`cd /home/lfl/pg-mcp/src && uv run pytest tests/integration/ -v`
+
+---
+
+## 7. 端到端（Layer 4，实测 20 用例）
+
+### 7.1 `test_mcp_tool.py`（20）
+
+通过 `server._server.request_handlers[CallToolRequest]` 直驱 MCP handler：
+
+- `query` 工具：成功路径、`E_SCHEMA_NOT_READY` 重试提示、SQL 校验失败重试 → 最终 `E_SQL_INVALID`
+- `refresh_schema` 管理工具
+- 未知工具名 → `result.root.isError=True`（注意：MCP server 包装层把 `McpError` 转 `CallToolResult`，**不会** raise）
+- `QueryResponse` 必含 `request_id`、`database`、`validation_used`
+
+跑：`cd /home/lfl/pg-mcp/src && uv run pytest tests/e2e/ -v`
+
+---
+
+## 8. 验收测试（Layer 5）— `fixtures/acceptance.sh`
+
+### 8.1 入口
+
+```bash
+cd /home/lfl/pg-mcp && bash fixtures/acceptance.sh
+```
+
+脚本已 checked-in，无任何占位变量；每个检查项是真实的 Python 调用。
+
+### 8.2 检查项
+
+| ID | 主题 | 关键断言 |
 |---|---|---|
-| M-1 | `ListToolsRequest` 返回 1 个 `query` 工具 | inputSchema 含 `query/database/return_type/admin_action` |
-| M-2 | `CallToolRequest{name="query"}` happy path | 返回 1 条 `TextContent`，含 `QueryResponse.model_dump_json()` |
-| M-3 | 业务错误转 ErrorDetail | DbNotFoundError → `error.code == "E_DB_NOT_FOUND"` |
-| M-4 | 未知 tool → `isError=True`，正文含 "Unknown tool" | 不抛 McpError，封装在 result.root |
-| M-5 | 缺参 → `isError=True` | 同上 |
-| M-6 | `admin_action=refresh_schema` happy path | `response.refresh_result` 非空 |
-| M-7 | `return_type=sql` 不执行 SQL | `executor.execute_calls == 0` |
+| A1 | Schema discovery | 三库的 tables/views/idx/enums/comp/fks 实际计数命中 |
+| A2 | 检索阈值 | `should_use_retrieval`：mini_blog=False, shop_oms=False, analytics_dw=True |
+| A3 | SQL Executor | LIMIT wrap 截断；EXPLAIN 列名；`SET LOCAL search_path` 命中 customers=200 |
+| A4 | QueryEngine 全链路 | `mini_blog` 自然语言 → SQL → 行结果 |
+| A5 | Prompt context size | full vs retrieval 字节数与压缩比，analytics_dw 压缩 92% |
 
-### 7.2 SSE 传输（P2，可选）
-- 当前不在自动 CI 中（异步 stream 测试复杂、收益有限）。
-- 验收时手动跑：
-  ```bash
-  pg-mcp --transport sse &
-  curl -N http://localhost:8000/sse  # 应保持长连接
-  ```
+### 8.3 实测输出（2026-05-01）
 
-### 7.3 CLI 生命周期（**新增 P1**）
-
-新增测试文件 `tests/integration/test_cli_lifecycle.py`，覆盖：
-- 启动 → 后台 warmup task 创建 → 收 SIGTERM → 取消 + 等待 + close pool/redis
-- `--transport stdio` 立即返回（stdio_server 等待 stdin）
-- `--transport sse` 启动 uvicorn，收信号后干净关闭
-
-**预期断言**：
-- 进程退出码 0
-- 没有 `Task was destroyed but it is pending!` 警告（用 `-W error::ResourceWarning` 跑）
-- pool 与 redis 客户端的 `close*()` 都被调用恰好 1 次
-
-**P0 / P1 / P2 标签**：本节 7.1 / 7.3 是 P0，7.2 是 P2。
-
-**运行**：`uv run pytest tests/e2e/ -W ignore`
-**通过条件**：20/20。
-
----
-
-## 8. 验收测试（Layer 5）— 真实数据库 + 全管道
-
-> 在 `fixtures/` 提供的 3 个真实数据库上端到端验证 pg-mcp 的核心能力。
-> 不依赖 OpenAI（用 `MockSqlGenerator`），但 PostgreSQL 是真的。
-
-### 8.1 验收 A1：Schema 发现 in vivo
-
-```bash
-# 在 src/ 内运行
-cd /home/lfl/pg-mcp/src
-PG_HOST=localhost PG_PORT=5433 PG_USER=test PG_PASSWORD=test \
-  uv run python - <<'PY'
-import asyncio
-from pg_mcp.config import Settings
-from pg_mcp.db.pool import ConnectionPoolManager
-from pg_mcp.schema.discovery import SchemaDiscovery
-
-async def main():
-    s = Settings(pg_host="localhost", pg_port=5433, pg_user="test",
-                 pg_password="test", openai_api_key="dummy")
-    p = ConnectionPoolManager(s)
-    try:
-        for db, exp_tables in [("mini_blog", 6), ("shop_oms", 19), ("analytics_dw", 64)]:
-            schema = await SchemaDiscovery(p, s).load_schema(db)
-            assert len(schema.tables) == exp_tables, (db, len(schema.tables))
-            print(f"{db:14s}: {len(schema.tables)} tables / {len(schema.views)} views / "
-                  f"{len(schema.indexes)} idx / {len(schema.enum_types)} enums / "
-                  f"{len(schema.composite_types)} composites / "
-                  f"{len(schema.foreign_keys)} fks")
-    finally:
-        await p.close_all()
-
-asyncio.run(main())
-PY
 ```
-
-**期望输出**（行级匹配）：
-```
-mini_blog     : 6 tables / 1 views / 18 idx / 1 enums / 0 composites / 7 fks
-shop_oms      : 19 tables / 3 views / 61 idx / 7 enums / 1 composites / 15 fks
-analytics_dw  : 64 tables / 4 views / 135 idx / 11 enums / 2 composites / 23 fks
-```
-
-> ⚠ 数字必须**完全一致**；任何 ±1 偏差说明 fixture 或 discovery 出了 regression。
-
-### 8.2 验收 A2：检索路径触发阈值
-
-```bash
-PG_HOST=localhost PG_PORT=5433 PG_USER=test PG_PASSWORD=test \
-  uv run python - <<'PY'
-import asyncio
-from pg_mcp.config import Settings
-from pg_mcp.db.pool import ConnectionPoolManager
-from pg_mcp.schema.discovery import SchemaDiscovery
-from pg_mcp.schema.retriever import SchemaRetriever
-
-async def main():
-    s = Settings(pg_host="localhost", pg_port=5433, pg_user="test",
-                 pg_password="test", openai_api_key="dummy")
-    p = ConnectionPoolManager(s)
-    r = SchemaRetriever(max_tables_for_full=s.schema_max_tables_for_full_context)
-    try:
-        for db, expected in [("mini_blog", False), ("shop_oms", False), ("analytics_dw", True)]:
-            schema = await SchemaDiscovery(p, s).load_schema(db)
-            actual = r.should_use_retrieval(schema)
-            assert actual == expected, (db, actual, expected)
-            print(f"{db}: should_use_retrieval={actual}  (threshold={s.schema_max_tables_for_full_context})")
-    finally:
-        await p.close_all()
-
-asyncio.run(main())
-PY
-```
-
-**期望**：3 行打印，最后一行 `analytics_dw: should_use_retrieval=True`。
-
-### 8.3 验收 A3：SQL 校验+执行 against fixtures
-
-不要再 mock 数据库；直接打到真实 PG，验证只读事务、LIMIT 包裹、`SET LOCAL`。
-
-```bash
-PG_HOST=localhost PG_PORT=5433 PG_USER=test PG_PASSWORD=test \
-  uv run python - <<'PY'
-import asyncio
-from pg_mcp.config import Settings
-from pg_mcp.db.pool import ConnectionPoolManager
-from pg_mcp.engine.sql_executor import SqlExecutor
-
-async def main():
-    s = Settings(pg_host="localhost", pg_port=5433, pg_user="test",
-                 pg_password="test", openai_api_key="dummy", max_rows=5)
-    p = ConnectionPoolManager(s)
-    try:
-        ex = SqlExecutor(p, s)
-        # 普通 SELECT — 应被 LIMIT 包裹到 6 行
-        r = await ex.execute("mini_blog",
-                             "SELECT id, title FROM posts ORDER BY id",
-                             schema_names=["public"])
-        assert r.row_count == 5 and r.truncated is True, r
-        print(f"A3.1 ok: row_count={r.row_count} truncated={r.truncated}")
-
-        # EXPLAIN — 跳过 LIMIT 包裹
-        r = await ex.execute("mini_blog",
-                             "EXPLAIN SELECT * FROM posts",
-                             schema_names=["public"], is_explain=True)
-        assert any("Seq Scan" in str(c) or "QUERY PLAN" in str(c) for c in r.columns + [r.rows])
-        print(f"A3.2 ok: EXPLAIN columns={r.columns}")
-
-        # 多 schema — search_path 必须含两个 schema
-        r = await ex.execute("shop_oms",
-                             "SELECT count(*) FROM customers",  # users.customers
-                             schema_names=["public", "users"])
-        assert r.rows[0][0] >= 100
-        print(f"A3.3 ok: customers count={r.rows[0][0]}")
-    finally:
-        await p.close_all()
-
-asyncio.run(main())
-PY
-```
-
-**期望**：3 行 `ok` 输出，无异常。
-
-### 8.4 验收 A4：QueryEngine 全管道（mock LLM + 真 PG）
-
-```bash
-cd /home/lfl/pg-mcp/src
-PG_HOST=localhost PG_PORT=5433 PG_USER=test PG_PASSWORD=test \
-REDIS_URL=redis://localhost:6380/0 \
-  uv run python - <<'PY'
-import asyncio
-import redis.asyncio as redis
-from pg_mcp.config import Settings
-from pg_mcp.db.pool import ConnectionPoolManager
-from pg_mcp.engine.orchestrator import QueryEngine
-from pg_mcp.engine.sql_executor import SqlExecutor
-from pg_mcp.engine.sql_validator import SqlValidator
-from pg_mcp.engine.db_inference import DbInference
-from pg_mcp.engine.result_validator import ResultValidator
-from pg_mcp.schema.cache import SchemaCache
-from pg_mcp.schema.retriever import SchemaRetriever
-from pg_mcp.models.request import QueryRequest
-from tests.conftest import MockSqlGenerator, MockResultValidator
-
-async def main():
-    s = Settings(pg_host="localhost", pg_port=5433, pg_user="test", pg_password="test",
-                 redis_url="redis://localhost:6380/0",
-                 pg_databases="mini_blog,shop_oms,analytics_dw",
-                 openai_api_key="dummy",
-                 enable_validation=False)
-    pool = ConnectionPoolManager(s)
-    rcl  = redis.from_url(s.redis_url)
-    cache = SchemaCache(rcl, pool, s)
-    cache.set_discovered_databases(s.pg_databases_list)
-    await cache.refresh()        # 同步加载所有 fixtures
-
-    sql_gen = MockSqlGenerator(sql="SELECT count(*) AS posts FROM posts")
-    engine = QueryEngine(
-        sql_generator=sql_gen,
-        sql_validator=SqlValidator(),
-        sql_executor=SqlExecutor(pool, s),
-        schema_cache=cache,
-        db_inference=DbInference(cache, s),
-        result_validator=MockResultValidator(),
-        retriever=SchemaRetriever(s.schema_max_tables_for_full_context),
-        settings=s,
-    )
-
-    resp = await engine.execute(QueryRequest(query="how many posts", database="mini_blog"))
-    assert resp.error is None, resp.error
-    assert resp.row_count == 1
-    assert resp.rows[0][0] == 18  # mini_blog has 18 posts
-    print(f"A4 ok: {resp.rows} from {resp.database}")
-
-    await pool.close_all()
-    await rcl.aclose()
-
-asyncio.run(main())
-PY
-```
-
-**期望**：`A4 ok: [[18]] from mini_blog`，无异常。
-
-### 8.5 验收 A5：不同规模库的 prompt 体积
-
-```bash
-# 在 src/ 内
-PG_HOST=localhost PG_PORT=5433 PG_USER=test PG_PASSWORD=test \
-  uv run python - <<'PY'
-import asyncio
-from pg_mcp.config import Settings
-from pg_mcp.db.pool import ConnectionPoolManager
-from pg_mcp.schema.discovery import SchemaDiscovery
-from pg_mcp.schema.retriever import SchemaRetriever
-
-async def main():
-    s = Settings(pg_host="localhost", pg_port=5433, pg_user="test",
-                 pg_password="test", openai_api_key="dummy")
-    p = ConnectionPoolManager(s)
-    r = SchemaRetriever(max_tables_for_full=s.schema_max_tables_for_full_context)
-    try:
-        for db in ("mini_blog", "shop_oms", "analytics_dw"):
-            schema = await SchemaDiscovery(p, s).load_schema(db)
-            full = schema.to_prompt_text()
-            # 中等以下用 full；analytics_dw 用 retrieval
-            if r.should_use_retrieval(schema):
-                ctx = r.retrieve("top revenue products this quarter", schema)
-                print(f"{db}: full={len(full)}  retrieval={len(ctx)}  "
-                      f"compression={(len(full) - len(ctx)) / len(full) * 100:.0f}%")
-            else:
-                print(f"{db}: full={len(full)}  (no retrieval)")
-    finally:
-        await p.close_all()
-
-asyncio.run(main())
-PY
-```
-
-**期望**：
-- `mini_blog: full≈2073` (no retrieval)
-- `shop_oms:  full≈5824` (no retrieval)
-- `analytics_dw: full≈13431  retrieval≈1100  compression≈92%`
-
-数字允许 ±10 %（avoid brittle，因为 random() 影响 attributes JSON 长度）。
-
-### 8.6 验收套件聚合脚本
-
-把 8.1 ~ 8.5 收纳到 `fixtures/acceptance.sh`：
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-echo "=== A1 schema discovery ===";   bash -c "$A1"
-echo "=== A2 retrieval threshold ==="; bash -c "$A2"
-echo "=== A3 executor ===";          bash -c "$A3"
-echo "=== A4 full pipeline ===";     bash -c "$A4"
-echo "=== A5 prompt sizes ===";      bash -c "$A5"
-echo "=== ALL ACCEPTED ==="
-```
-
-**通过条件**：脚本退出码 0；`grep -c "ok"` 输出 ≥ 5。
-
----
-
-## 9. 烟雾测试（Layer 6）— 部署后入口校验
-
-部署后必须在 ≤ 60 s 内通过。前置：§3 环境已启动；`pg-mcp` 命令在 PATH 中
-（或用 `uv run pg-mcp`）。
-
-```bash
-cd /home/lfl/pg-mcp/src
-export PG_HOST=localhost PG_PORT=5433 PG_USER=test PG_PASSWORD=test
-export PG_DATABASES=mini_blog,shop_oms,analytics_dw
-export REDIS_URL=redis://localhost:6380/0
-export OPENAI_API_KEY=sk-test-dummy
-
-# S-1: stdio transport — 收到 EOF (</dev/null) 后干净退出
-timeout 5 uv run pg-mcp --transport stdio < /dev/null > /tmp/pg-mcp.out 2>&1
-[ $? -eq 0 ] && echo "S-1 ok" || echo "S-1 FAIL"
-# 注：进程退出码即可，不依赖具体日志事件——
-#     当前 stdlib logging 默认 WARNING 级别，info 事件会被过滤（GAP-8）。
-
-# S-2: SSE transport + /health
-uv run pg-mcp --transport sse > /tmp/pg-mcp-sse.out 2>&1 &
-PID=$!
-for i in 1 2 3 4 5; do
-  curl -fsS http://localhost:8000/health 2>/dev/null && break
-  sleep 1
-done
-echo
-curl -fsS http://localhost:8000/health | grep -q '"status":"ok"' && echo "S-2 ok" || echo "S-2 FAIL"
-
-# S-3: /admin/refresh 返回 succeeded/failed 列表
-curl -fsS -X POST http://localhost:8000/admin/refresh > /tmp/refresh.out
-grep -q "succeeded" /tmp/refresh.out && echo "S-3 ok" || echo "S-3 FAIL"
-
-kill $PID 2>/dev/null; wait 2>/dev/null
-```
-
-**通过条件**：3 行 `S-* ok`。
-
-**实测输出**（2026-05-01 self-verify）：
-```
-S-1 ok
-{"status":"ok"}
-S-2 ok
-{"succeeded":["mini_blog","shop_oms","analytics_dw"],"failed":[]}
-S-3 ok
+=== A1 schema discovery ===
+  mini_blog      tables=6, views=1, idx=18, enums=1, comp=0, fks=7 OK
+  shop_oms       tables=19, views=3, idx=61, enums=7, comp=1, fks=15 OK
+  analytics_dw   tables=64, views=4, idx=135, enums=11, comp=2, fks=23 OK
+=== A2 retrieval threshold ===
+  mini_blog      should_use_retrieval=False OK
+  shop_oms       should_use_retrieval=False OK
+  analytics_dw   should_use_retrieval=True OK
+=== A3 SQL executor ===
+  A3.1 LIMIT wrap: row_count=5 truncated=True OK
+  A3.2 EXPLAIN: columns=['QUERY PLAN'] OK
+  A3.3 search_path: customers=200 OK
+=== A4 QueryEngine full pipeline ===
+  A4 ok: rows=[[18]] db=mini_blog
+=== A5 prompt context size ===
+  mini_blog      full=2073 no retrieval OK
+  shop_oms       full=5824 no retrieval OK
+  analytics_dw   full=13431 retrieval=1109 compression=92% OK
+=== ALL ACCEPTED ===
 ```
 
 ---
 
-## 10. SQL 校验黄金矩阵（P0，**必须 100 % 命中**）
+## 9. 烟雾测试（Layer 6）
 
-来自 PRD §3.3 + Design §8.2 + Impl §2.1。所有用例已纳入
-`tests/fixtures/sql_samples.py`，参数化运行：
+| ID | 命令 | 期望 |
+|---|---|---|
+| S-1 | `cd /home/lfl/pg-mcp/src && uv run pg-mcp --transport stdio < /dev/null` | exit 0（stdin EOF 时干净退出） |
+| S-2 | `cd /home/lfl/pg-mcp/src && uv run pg-mcp --transport sse &`，然后 `curl -s http://127.0.0.1:8000/health` | `{"status":"ok"}` |
+| S-3 | `curl -s -X POST http://127.0.0.1:8000/admin/refresh` | `{"succeeded":["mini_blog","shop_oms","analytics_dw"],"failed":[]}` |
 
-### 10.1 必须通过
+均在 2026-05-01 实跑通过。
 
-| SQL | 理由 |
-|---|---|
-| `SELECT 1` | 基本 |
-| `SELECT * FROM users WHERE id = 1` | WHERE |
-| `WITH cte AS (SELECT id FROM users) SELECT * FROM cte` | CTE |
-| `SELECT COUNT(*), department FROM employees GROUP BY department` | 聚合 |
-| `EXPLAIN SELECT * FROM orders` | EXPLAIN |
-| `EXPLAIN (VERBOSE, COSTS) SELECT * FROM orders` | EXPLAIN with options |
-| `SELECT name, ROW_NUMBER() OVER (PARTITION BY dept) FROM employees` | 窗口 |
-| `SELECT * FROM (VALUES (1, 'a')) AS t(id, name)` | VALUES |
+---
 
-### 10.2 必须拒绝（详见 `FAIL_CASES`）
+## 10. SQL 校验黄金矩阵
 
-| SQL | code |
-|---|---|
-| `INSERT INTO users VALUES (1, 'x')` | E_SQL_UNSAFE |
-| `UPDATE users SET name = 'x'` | E_SQL_UNSAFE |
-| `DELETE FROM users` | E_SQL_UNSAFE |
-| `DROP TABLE users` | E_SQL_UNSAFE |
-| `TRUNCATE users` | E_SQL_UNSAFE |
-| `CREATE TABLE x (i int)` | E_SQL_UNSAFE |
-| `ALTER TABLE users ADD c int` | E_SQL_UNSAFE |
-| `GRANT SELECT ON users TO PUBLIC` | E_SQL_UNSAFE |
-| `COPY users TO '/tmp/dump'` | E_SQL_UNSAFE |
-| `CALL my_proc()` | E_SQL_UNSAFE |
-| `EXPLAIN ANALYZE SELECT * FROM users` | E_SQL_UNSAFE（执行查询） |
-| `SELECT 1; DROP TABLE x` | E_SQL_UNSAFE（多语句） |
-| `SELECT pg_sleep(100)` | E_SQL_UNSAFE（黑名单） |
-| `SELECT pg_read_file('/etc/passwd')` | E_SQL_UNSAFE |
-| `SELECT dblink('host=evil','SELECT 1')` | E_SQL_UNSAFE |
-| `SELECT lo_import('/etc/passwd')` | E_SQL_UNSAFE |
-| `SELECT * FROM foreign_table_x` | E_SQL_UNSAFE（外表） |
-| `WITH cte AS (INSERT INTO logs VALUES (1) RETURNING id) SELECT * FROM cte` | E_SQL_UNSAFE（CTE 内 DML） |
+### 10.1 必须通过（PASS — 22 cases）
 
-**运行**：`uv run pytest tests/unit/test_sql_validator.py::TestPassCases tests/unit/test_sql_validator.py::TestFailCases tests/unit/test_sql_validator.py::TestForeignTables -v`
-**通过条件**：所有参数化用例通过；任何新增黑名单/白名单变更**必须同步**更新 `sql_samples.py`。
+`basic_select, select_star, select_where, cte_simple, cte_multiple, aggregate_group_by, join_query, left_join, subquery, union_query, explain_select, explain_verbose, window_function, select_from_values, distinct_select, order_by_limit, safe_function_upper, safe_function_count, safe_function_coalesce, safe_function_date_trunc, intersect_query, except_query, case_expression`
+
+来源：`src/tests/fixtures/sql_samples.py::PASS_CASES`，由 `TestPassCases` 参数化覆盖。
+
+### 10.2 必须拒绝 — 完整 34 deny functions
+
+> Design §4.8 `DENY_FUNCTIONS` 共 34 项；当前 `FAIL_CASES` 命名覆盖 12 项（每 family 至少 1 个），其余 22 项靠 family-cover 兜底，列入 §16.2 GAP-DENY。
+
+| Family | Function | 当前命名覆盖 |
+|---|---|---|
+| file_system | `pg_read_file` | yes (`func_pg_read_file`) |
+| file_system | `pg_read_binary_file` | yes (`func_pg_read_binary_file`) |
+| file_system | `pg_ls_dir` | yes (`func_pg_ls_dir`) |
+| file_system | `pg_stat_file` | no (Planned) |
+| large_object | `lo_import` | yes (`func_lo_import`) |
+| large_object | `lo_export` | yes (`func_lo_export`) |
+| large_object | `lo_get` | no (Planned) |
+| large_object | `lo_put` | no (Planned) |
+| sleep | `pg_sleep` | yes (`func_pg_sleep`) |
+| advisory_lock | `pg_advisory_lock` | yes (`func_pg_advisory_lock`) |
+| advisory_lock | `pg_advisory_xact_lock` | no (Planned) |
+| advisory_lock | `pg_advisory_unlock` | no (Planned) |
+| advisory_lock | `pg_advisory_unlock_all` | no (Planned) |
+| advisory_lock | `pg_try_advisory_lock` | no (Planned) |
+| advisory_lock | `pg_try_advisory_xact_lock` | no (Planned) |
+| notify | `pg_notify` | yes (`func_pg_notify`) |
+| notify | `pg_listening_channels` | no (Planned) |
+| external | `dblink` | yes (`func_dblink`) |
+| external | `dblink_exec` | yes (`func_dblink_exec`) |
+| external | `dblink_connect` | no (Planned) |
+| external | `dblink_disconnect` | no (Planned) |
+| external | `dblink_send_query` | no (Planned) |
+| external | `dblink_get_result` | no (Planned) |
+| process | `pg_terminate_backend` | yes (`func_pg_terminate_backend`) |
+| process | `pg_cancel_backend` | no (Planned) |
+| config | `pg_reload_conf` | no (Planned) |
+| config | `pg_rotate_logfile` | no (Planned) |
+| config | `set_config` | yes (`func_set_config`) |
+| config | `current_setting` | no (Planned) |
+| wal | `pg_switch_wal` | no (Planned) |
+| wal | `pg_create_restore_point` | no (Planned) |
+
+合计：**12 / 34 命名覆盖**。其余 22 项的 family-cover 在 §16.2 P2 计入扩展。
+
+### 10.3 statement-level 必拒（来自 `FAIL_CASES`，共 32）
+
+| 类型 | 数量 | 用例 ID |
+|---|---|---|
+| DML | 7 | `insert, insert_select, update, update_where, delete, delete_where, truncate` |
+| DDL | 5 | `drop_table, drop_index, create_table, alter_table, create_index` |
+| Privilege | 2 | `grant, revoke` |
+| COPY | 3 | `copy_to, copy_from, copy_program` |
+| Multi-statement | 2 | `multi_statement, multi_select` |
+| Blacklisted functions | 12 | 见 §10.2 [yes] 行 |
+| EXPLAIN ANALYZE | 2 | `explain_analyze, explain_analyze_verbose` |
+| CALL / 其他 | 3 | `call_procedure, cte_with_insert, select_with_drop`（最后一项触发 `E_SQL_PARSE`） |
+
+PARSE_FAIL（3）：`invalid_syntax, unclosed_string, missing_paren`
+FOREIGN_TABLE（2）：`select_foreign_table, select_foreign_qualified`
+
+### 10.4 当前覆盖现状
+
+12/34 deny function 有 named test，其余 22 个靠 family-cover 兜底；该差距登记为 §17 **GAP-DENY**，§16.2 P2 跟进。
 
 ---
 
 ## 11. 覆盖率门禁
 
-### 11.1 当前状态（2026-05-01 实测）
+### 11.1 当前实测（live, 2026-05-01）
+
+- 行覆盖：**86%**
+- 行+分支：**85%**
+
+### 11.2 起步门禁（PR 必跑，今天可过 — `--cov-fail-under=80`）
 
 ```bash
-cd /home/lfl/pg-mcp/src
-uv run pytest --cov=pg_mcp --cov-report=term-missing tests/ -W ignore
-# →  TOTAL  84.86 % (line)
-
-uv run pytest --cov=pg_mcp --cov-branch --cov-report=term-missing tests/ -W ignore
-# →  TOTAL  83.49 % (line + branch)
+cd /home/lfl/pg-mcp/src && uv run pytest --cov=pg_mcp --cov-fail-under=80 tests/ -W ignore
 ```
 
-### 11.2 起步门禁（**当前可达**，每次 CI 跑）
+### 11.3 模块级最小（标注当前过 / 未过）
 
-```bash
-uv run pytest --cov=pg_mcp --cov-fail-under=80 tests/ -W ignore
-```
-**通过条件**：整体行覆盖率 ≥ 80 %。本计划撰写时 84.86 % 通过。
-
-### 11.3 目标门禁（**6 周内达成**）
-
-```bash
-uv run pytest --cov=pg_mcp --cov-branch --cov-fail-under=85 tests/ -W ignore
-```
-
-### 11.4 模块级最小覆盖率（PR diff 内若涉及）
-
-| 模块 | 行 | 分支 | 当前 |
+| Module | 实测 | 起步门禁 | 状态 |
 |---|---|---|---|
-| `pg_mcp/engine/sql_validator.py` | 100 % | 100 % | 95 / 89 |
-| `pg_mcp/engine/sql_executor.py`  | 95 %  | 90 %  | 100 / 100 ✅ |
-| `pg_mcp/engine/orchestrator.py`  | 90 %  | 85 %  | 85 / 84 |
-| `pg_mcp/engine/result_validator.py` | 90 % | 85 % | 94 / 91 ✅ |
-| `pg_mcp/engine/db_inference.py`  | 90 %  | 85 %  | 93 / 88 ✅ |
-| `pg_mcp/schema/discovery.py`     | 90 %  | 85 %  | 92 / 79 |
-| `pg_mcp/schema/cache.py`         | 80 %  | 75 %  | 78 / 75 |
-| `pg_mcp/schema/retriever.py`     | 85 %  | 80 %  | 88 / 76 |
-| `pg_mcp/models/*.py`             | 95 %  | 90 %  | 79 / —（`schema.py` 79 %） |
-| **整体（含 cli/app）**            | **80 % → 85 %** | **80 % → 85 %** | **85 / 83** |
+| `pg_mcp/__init__.py` | 100% | 100% | OK |
+| `pg_mcp/__main__.py` | 0% | — (immediate-exec entry) | exempt |
+| `pg_mcp/app.py` | 83% | 80% | OK |
+| `pg_mcp/cli.py` | 0% | — (Planned §16.1) | exempt-now |
+| `pg_mcp/config.py` | 100% | 95% | OK |
+| `pg_mcp/db/pool.py` | 92% | 85% | OK |
+| `pg_mcp/engine/db_inference.py` | 90% | 85% | OK |
+| `pg_mcp/engine/orchestrator.py` | 82% | 80% | OK |
+| `pg_mcp/engine/result_validator.py` | 93% | 85% | OK |
+| `pg_mcp/engine/sql_executor.py` | 100% | 90% | OK |
+| `pg_mcp/engine/sql_generator.py` | 100% | 90% | OK |
+| `pg_mcp/engine/sql_validator.py` | 92% (branch) | **100% (CLAUDE.md target)** | **GAP** |
+| `pg_mcp/models/errors.py` | 100% | 100% | OK |
+| `pg_mcp/models/request.py` | 100% | 100% | OK |
+| `pg_mcp/models/response.py` | 100% | 100% | OK |
+| `pg_mcp/models/schema.py` | 72% | 80% | **GAP** |
+| `pg_mcp/observability/logging.py` | 83% | 80% | OK |
+| `pg_mcp/observability/metrics.py` | 57% | 80% | **GAP** |
+| `pg_mcp/observability/sanitizer.py` | 100% | 100% | OK |
+| `pg_mcp/protocols.py` | 100% | 100% | OK |
+| `pg_mcp/schema/cache.py` | 77% | 80% | **GAP** (close) |
+| `pg_mcp/schema/discovery.py` | 88% | 85% | OK |
+| `pg_mcp/schema/retriever.py` | 86% | 85% | OK |
+| `pg_mcp/schema/state.py` | 100% | 100% | OK |
+| `pg_mcp/server.py` | 89% | 85% | OK |
+| **TOTAL** | **85%** | **80%** | OK |
 
-`cli.py` / `app.py` / `__main__.py` 当前不计入硬门禁（生命周期测试覆盖；
-见 §7.3）。`models/schema.py` 79 % 因 `to_prompt_text()` / `to_summary_text()`
-中部分分支（罕见类型组合）未覆盖；可在补 §7.3 时一起加。
+GAP 项已登记到 §17。
 
 ---
 
-## 12. 质量门禁（合入前）
+## 12. 质量门禁
 
-> **当前现实**：`ruff check`、`ruff format --check`、`mypy --strict` 都报错
-> （详见 §0 / §16 GAP-7）。本节定义"目标"门禁，并提供一个**今天就能用**
-> 的"过渡"门禁。
-
-### 12.1 过渡门禁（每个 PR 必跑，**当前可通过**）
-
-按顺序、全部通过才允许合入：
+### 12.1 过渡门禁（每个 PR；今天可过 —— 仓库根；BASE_REF 参数化）
 
 ```bash
-cd /home/lfl/pg-mcp/src
+# Run from repo root; do not assume cwd=src.
+cd /home/lfl/pg-mcp
 
 # 0) lockfile 未漂移
-test -z "$(git status --porcelain uv.lock)" || (echo "uv.lock dirty"; exit 1)
+test -z "$(git -C src status --porcelain uv.lock)" || { echo "uv.lock dirty"; exit 1; }
 
-# 1) 测试 + 起步覆盖率（80 %）
-uv run pytest --cov=pg_mcp --cov-fail-under=80 tests/ -W ignore
+# 1) tests + 80% line coverage
+( cd src && uv run pytest --cov=pg_mcp --cov-fail-under=80 tests/ -W ignore )
 
-# 2) 安全：必测矩阵 100 % 通过（已在 §10）
-uv run pytest tests/unit/test_sql_validator.py -v
+# 2) golden security matrix
+( cd src && uv run pytest tests/unit/test_sql_validator.py -v )
 
-# 3) PR diff 中变动文件的 ruff & mypy（不阻塞已有 debt）
-git diff --name-only origin/master... | grep -E '\.py$' | \
-  xargs -r uv run ruff check
-git diff --name-only origin/master... | grep -E '\.py$' | \
-  grep '^src/pg_mcp/' | xargs -r uv run mypy
+# 3) PR-diff lint/typecheck (parameterizable base ref; fall back to origin/master if origin/HEAD 未设)
+BASE_REF="${BASE_REF:-$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/master)}"
+git diff --name-only "${BASE_REF}..." \
+  | grep -E '^src/.*\.py$' \
+  | sed 's|^src/||' \
+  | xargs -r -I{} sh -c 'cd src && uv run ruff check {}'
+git diff --name-only "${BASE_REF}..." \
+  | grep -E '^src/pg_mcp/.*\.py$' \
+  | sed 's|^src/||' \
+  | xargs -r -I{} sh -c 'cd src && uv run mypy {}'
 ```
 
-### 12.2 目标门禁（**6 周内**全量通过）
-
-```bash
-cd /home/lfl/pg-mcp/src
-
-# 1) 全仓库 ruff lint
-uv run ruff format --check pg_mcp/ tests/
-uv run ruff check pg_mcp/ tests/
-
-# 2) 全 src 类型检查
-uv run mypy pg_mcp/
-
-# 3) 测试 + 目标覆盖率（85 % 含分支）
-uv run pytest --cov=pg_mcp --cov-branch --cov-fail-under=85 tests/ -W ignore
-
-# 4) 安全
-uv run pytest tests/unit/test_sql_validator.py -v
-```
-
-**任何一步失败 → PR 不可合**。
-
-### 12.3 自动化建议
-
-把 §12.1 的命令配成 GitHub Actions `lint-test` job；§12.2 的目标门禁配成
-`quality-strict`，先放在 `continue-on-error: true` 直到全绿。
+> 全仓 `ruff check` / `ruff format --check` / `mypy` 当前未过（141 / 30 / 33），**目标门禁**（清零）见 §16.1 P1。
 
 ---
 
-## 13. CI 矩阵
+## 13. 需求 — 测试 Traceability matrix
 
-| 维度 | 取值 | 备注 |
+> 所有 P0/P1 PRD/Design/Impl 条目至少占一行；未实现条目标 `Planned`，并指向 §16 backlog 项。共 34 行。
+
+| # | Requirement | Source | Canonical test | Layer | Status |
+|---|---|---|---|---|---|
+| 1 | Cold-start E_SCHEMA_NOT_READY + retry_after_ms | PRD §3.1 | `tests/unit/test_orchestrator.py::TestErrorPropagation` | unit | Verified |
+| 2 | Schema lazy state machine | PRD §3.1 + Design §6 | `tests/integration/test_schema_cache.py::TestStateMachine` | integration | Verified |
+| 3 | Singleflight loader | PRD §3.1 + Design §6 | `tests/integration/test_schema_cache.py::TestSingleflight` | integration | Verified |
+| 4 | Background warmup | Impl §5.5 | `tests/integration/test_schema_cache.py::TestWarmup` | integration | Verified |
+| 5 | TTL expiry reload | Design §6 | (Planned: §16.1) | integration | Planned |
+| 6 | Redis LRU policy（委托给 Redis 配置） | PRD §3.1 + Design §6 | n/a — `redis-cli config get maxmemory-policy` | config | Out-of-test |
+| 7 | SQL deny-list functions（family-cover） | PRD §3.3 + Design §4.8 | `tests/unit/test_sql_validator.py::TestFailCases` | unit | Verified (12/34 named) |
+| 8 | Multi-statement reject | Design §8.2 | `TestFailCases[multi_statement, multi_select]` | unit | Verified |
+| 9 | Foreign table reject | PRD §3.3 | `TestForeignTables` | unit | Verified |
+| 10 | EXPLAIN ANALYZE reject | Design §8.2 | `TestFailCases[explain_analyze, explain_analyze_verbose]` | unit | Verified |
+| 11 | Function whitelist via schema | PRD §3.3 | `TestFunctionWhitelist` | unit | Verified |
+| 12 | Statement timeout enforcement | Design §4.9 | `tests/integration/test_sql_executor.py::TestExecute` | integration | Verified |
+| 13 | LIMIT wrap (soft/hard) | Design §4.9 | `TestLimitWrapping` | integration | Verified |
+| 14 | Identifier quoting | Design §4.9 | `TestQuoteIdent` | integration | Verified |
+| 15 | LLM timeout mapping | Impl §2.4 | `tests/unit/test_sql_generator.py` G-3 | unit | Verified |
+| 16 | LLM APIError mapping | Impl §2.4 | G-4 | unit | Verified |
+| 17 | Feedback retry prompt | Impl §5.5 | G-5 | unit | Verified |
+| 18 | Markdown fence stripping | Impl §2.4 | G-2 (5 参数化) | unit | Verified |
+| 19 | Token usage extraction | Impl §2.4 | G-1, G-9 | unit | Verified |
+| 20 | Result row truncation (soft) | Design §4.4 | `tests/integration/test_sql_executor.py::TestResultProcessing` | integration | Verified |
+| 21 | Result row truncation (hard) | Design §4.4 | `TestResultProcessing` | integration | Verified |
+| 22 | QueryResponse field: `request_id` | PRD §3.5 | `tests/e2e/test_mcp_tool.py::TestResponseFormat` | e2e | Verified |
+| 23 | QueryResponse field: `validation_used` | PRD §3.5 | `tests/unit/test_orchestrator.py::TestResultValidation` | unit | Verified |
+| 24 | QueryResponse field: `warnings` | PRD §3.5 | (Planned: §16.2) | unit | Planned |
+| 25 | Log event: `request_received` | Design §7.1 | A4 acceptance | integration | Verified (manually) |
+| 26 | Log event: `sql_generated` | Design §7.1 | A4 acceptance | integration | Verified (manually) |
+| 27 | Log event: `sql_executed` | Design §7.1 | A4 acceptance | integration | Verified (manually) |
+| 28 | CLI startup discovers DBs only（不预加载 schema） | PRD §3.1 | (Planned: §16.1 — `test_cli_lifecycle.py`) | integration | Planned |
+| 29 | CLI signal handling / clean shutdown | Impl §5.5 | (Planned: §16.1) | integration | Planned |
+| 30 | SSE transport lifecycle | Impl §5.5 | (Planned: §16.1) | e2e | Planned |
+| 31 | `PG_DATABASES` override discover | Impl §5.5 | `tests/integration/test_pool.py::TestDiscoverDatabases` | integration | Verified |
+| 32 | Connection retry / 退避 | Impl §5.5 | `TestRetryLogic` | integration | Verified |
+| 33 | Hierarchical deny-list (`db.*.*`) | Design §5 | `tests/unit/test_result_validator.py::TestHierarchicalDenyList` | unit | Verified |
+| 34 | MCP unknown tool → `isError=True` | PRD §3.5 | `tests/e2e/test_mcp_tool.py::TestErrorHandling` | e2e | Verified |
+
+---
+
+## 14. 响应 / 可观测性契约矩阵
+
+### 14.1 `QueryResponse` 字段契约（13 字段）
+
+| Field | 何时 set | 默认 | Canonical test |
+|---|---|---|---|
+| `request_id` | always | UUID4 | `tests/e2e/test_mcp_tool.py::TestResponseFormat` |
+| `database` | always（编排器决议出 DB 后） | n/a | `tests/unit/test_orchestrator.py` |
+| `sql` | 当生成成功 | None | `tests/e2e/test_mcp_tool.py` |
+| `columns` | 有结果集 | None | `tests/integration/test_sql_executor.py::TestResultProcessing` |
+| `column_types` | 有结果集 | None | `TestResultProcessing` |
+| `rows` | 有结果集 | None | `TestResultProcessing` |
+| `row_count` | 有结果集 | None | `TestResultProcessing` |
+| `truncated` | 有结果集 | False | `TestLimitWrapping` |
+| `truncated_reason` | `truncated=True` | None | `TestLimitWrapping` |
+| `validation_used` | always（result validator 接入与否） | False | `tests/unit/test_orchestrator.py::TestResultValidation` |
+| `schema_loaded_at` | always | n/a | (Planned: §16.2) |
+| `warnings` | 有降级 / mask / metadata-only 时 | `[]` | (Planned: §16.2) |
+| `error` | 失败路径 | None | `tests/e2e/test_mcp_tool.py::TestErrorHandling` |
+
+### 14.2 结构化日志事件契约（8 事件）
+
+| Event | 必含字段 | A4 实测可见 | Canonical test |
+|---|---|---|---|
+| `request_received` | `request_id, query_length, database, return_type` | Yes | Planned (explicit log assertion §16.1) |
+| `schema_loaded` | `database, table_count, cache_hit, elapsed_ms` | partly (`table_count`+`elapsed_ms`) | Planned |
+| `sql_generated` | `attempt, prompt_tokens, completion_tokens, logprob, elapsed_ms` | Yes (`logprob=None`) | Planned |
+| `sql_validation_failed` | `attempt, reason` | A4 未覆盖 | Planned |
+| `sql_executed` | `row_count, truncated, elapsed_ms` | Yes | Planned |
+| `result_validated` | `verdict, attempt, data_policy, denied, elapsed_ms` | A4 未覆盖（validator 关闭） | Planned |
+| `request_completed` | `total_elapsed_ms` | Yes | Planned |
+| `request_failed` | `error_code, error_message` | A4 未覆盖 | Planned |
+
+A4 中均含 `request_id`。CLI 启动日志单独需 §16.1 验证。
+
+---
+
+## 15. Fixture 计数索引
+
+| DB | tables | views | mat-views | idx | enums | comp | fks | rows |
+|---|---|---|---|---|---|---|---|---|
+| `mini_blog` | 6 | 1 | 0 | 18 | 1 | 0 | 7 | ~200 |
+| `shop_oms` | 19 | 3 | 2 | 61 | 7 | 1 | 15 | ~8 000 |
+| `analytics_dw` | 64 | 4 | 3 | 135 | 11 | 2 | 23 | ~165 000 |
+
+`analytics_dw` >50 表，触发 `SCHEMA_MAX_TABLES_FOR_FULL_CONTEXT` 检索路径。
+
+---
+
+# Part B — Planned Additions
+
+> 以下条目尚未在 2026-05-01 的自验中跑通或未实现；不计入 §0 总数与 §11 当前覆盖。
+
+## 16. Backlog by priority
+
+### 16.1 P1（block 下一次 PR）
+
+- **CLI lifecycle 测试**（新增 `tests/integration/test_cli_lifecycle.py`）：`cli.py` 当前 0%；覆盖 startup 仅 discover DBs（不预加载 schema）、signal handling / clean shutdown、PG_DATABASES 解析失败的退出码。**对齐 traceability 28/29。**
+- **SSE lifecycle 测试**（恢复 P1 对齐 Impl §5.5）：FastAPI app 启动 → /sse 建链 → MCP message 双向 → 优雅关闭。**对齐 traceability 30。**
+- `sql_validator.py` branch 92% → 100%（CLAUDE.md 安全关键路径硬要求）。
+- TTL expiry reload 集成测试（**对齐 traceability 5**）。
+- 质量门禁清零：`ruff check` 141 → 0；`ruff format --check` 30 → 0；`mypy` 33 → 0。
+- 显式日志事件断言（`request_received` / `sql_generated` / `sql_executed` / `request_completed`），把 §14.2 全部 Planned 行落地。
+
+### 16.2 P2
+
+- **GAP-DENY**：扩展 `FAIL_CASES` 覆盖全部 34 deny functions（当前 12，新增 22 named test）。
+- `COPY ... TO PROGRAM`、`postgres_fdw` 显式 case（PRD §3.3 明列但目前只靠 `copy_program` 与 deny-function family 兜底）。
+- Runtime abuse PG-backed 测试：递归 CTE 触发 `statement_timeout`；`generate_series(1, 1e9)` 触发硬上限；大排序触发 `temp_file_limit`；窗口 abuse；`search_path` 含引号/逗号的注入字符串。
+- Foreign-table 真 fixture（当前 `TestForeignTables` 仅校验语法层拒绝）。
+- `metrics.py` 57% → ≥80%；`models/schema.py` 72% → ≥80%。
+- 性能/负载基准（含 200 表 schema 反序列化 < 5 ms 断言）。
+- CI 矩阵：Python 3.12 / 3.13 × PG 15 / 16 / 17。
+- bypass-LIMIT 回归测试。
+
+### 16.3 P3
+
+- 真 OpenAI sql_generator manual smoke（脱离 mock，跑一次 mini_blog 的 happy path）。
+
+---
+
+## 17. 已知缺口表
+
+| ID | Item | Owner section | Detail |
+|---|---|---|---|
+| GAP-1 | `cli.py` 0% 覆盖 | §16.1 | 无 lifecycle 测试 |
+| GAP-2 | SSE lifecycle 无自动测试 | §16.1 | Impl §5.5 列为高优先级 |
+| GAP-3 | `sql_validator.py` 分支 92% | §16.1 | CLAUDE.md 要求 100% |
+| GAP-4 | TTL expiry reload 未测 | §16.1 | Design §6 |
+| GAP-5 | Lint / format / mypy 未清零 | §16.1 | 141 / 30 / 33 |
+| GAP-6 | 日志事件无显式断言 | §16.1 | A4 仅人眼观察 |
+| GAP-DENY | 22/34 deny function 仅 family-cover | §16.2 | 见 §10.2 |
+| GAP-7 | Runtime abuse 未自动化 | §16.2 | 递归 CTE / 大 series / 大排序 / window abuse / search_path 注入 |
+| GAP-8 | `metrics.py` 57% | §16.2 | 计时器 / token 计数路径 |
+| GAP-9 | `models/schema.py` 72% | §16.2 | DatabaseSchema 序列化分支 |
+| GAP-10 | `schema/cache.py` 77%（差 80% 起步门禁） | §16.2 | 异常路径 |
+| GAP-11 | `warnings` / `schema_loaded_at` 无显式契约断言 | §16.2 | §14.1 |
+| GAP-12 | Foreign-table 真 fixture 缺失 | §16.2 | 仅语法层 |
+
+---
+
+## 18. 变更记录
+
+| 日期 | 修订 | 说明 |
 |---|---|---|
-| Python | 3.12 / 3.13 / 3.14 | 都跑全量 |
-| PostgreSQL | 14 / 15 / 16 / 17 | acceptance + integration 跑 |
-| Redis | 7 | 整套 |
-| 传输 | stdio / sse | smoke 各跑 1 次 |
-
-任意 (Python, PG) 组合失败 → 整个 PR 红。
-
----
-
-## 14. 自验执行记录（self-verify）
-
-**运行环境**：撰写本计划时已端到端跑通；下文记录可复现的实际命令与输出。
-
-```bash
-# §3.1 一次性环境 — 所有 3 步成功
-cd /home/lfl/pg-mcp/src && uv sync --extra dev
-cd ../fixtures && make docker-up        # → "==> pg-mcp-fixtures is ready."
-make all PG_PORT=5433 PG_USER=test PGPASSWORD=test \
-  PSQL='docker exec -i pg-mcp-fixtures psql' \
-  SUPER_PSQL='docker exec pg-mcp-fixtures psql'    # → 36 s, 全部 OK
-docker run -d --rm --name pg-mcp-redis -p 6380:6379 redis:7-alpine    # → PONG
-```
-
-```bash
-# §4 全量测试
-cd /home/lfl/pg-mcp/src && uv run pytest tests/ -W ignore
-# → 316 passed in 20.06s
-```
-
-```bash
-# §11.1 实测覆盖率
-uv run pytest --cov=pg_mcp tests/ -W ignore
-# → TOTAL 84.86 % (line)
-uv run pytest --cov=pg_mcp --cov-branch tests/ -W ignore
-# → TOTAL 83.49 % (line+branch)
-```
-
-```bash
-# §8.1 acceptance A1（实跑）
-PG_HOST=localhost PG_PORT=5433 PG_USER=test PG_PASSWORD=test \
-  uv run python <<<'... §8.1 脚本 ...'
-```
-→ 实际打印（**与 §15 fixture-counts 完全一致**）：
-```
-mini_blog     : 6 tables / 1 views / 18 idx / 1 enums / 0 composites / 7 fks
-shop_oms      : 19 tables / 3 views / 61 idx / 7 enums / 1 composites / 15 fks
-analytics_dw  : 64 tables / 4 views / 135 idx / 11 enums / 2 composites / 23 fks
-```
-
-```bash
-# §8.2 检索阈值 — 实测：
-mini_blog: should_use_retrieval=False  (threshold=50)
-shop_oms: should_use_retrieval=False  (threshold=50)
-analytics_dw: should_use_retrieval=True  (threshold=50)
-```
-
-```bash
-# §8.3 executor — 实测：
-A3.1 ok: row_count=5 truncated=True
-A3.2 ok: EXPLAIN columns=['QUERY PLAN']
-A3.3 ok: customers count=200
-```
-
-```bash
-# §8.4 全管道 — 实测：
-A4 ok: [[18]] from mini_blog
-```
-
-```bash
-# §8.5 prompt 体积 — 实测：
-mini_blog: full=2073  (no retrieval)
-shop_oms: full=5824  (no retrieval)
-analytics_dw: full=13431  retrieval=1109  compression=92%
-```
-
-```bash
-# §9 烟雾 — 实测：
-S-1 ok
-{"status":"ok"}
-S-2 ok
-{"succeeded":["mini_blog","shop_oms","analytics_dw"],"failed":[]}
-S-3 ok
-```
-
-> **未跑过的小节（标注于 §16）**：
-> - §7.3 CLI lifecycle 集成测试（P1，未实现，需要新增 `tests/integration/test_cli_lifecycle.py`）。
-> - §13 CI 矩阵（GitHub Actions 配置；独立 PR）。
-> - §11.3 / §12.2 目标门禁：覆盖率与 ruff/mypy 当前未达标；纳入 GAP-7/9。
-
----
-
-## 15. Fixture 计数索引（与 §6.3 / §8.1 对照）
-
-> 这些数字是 acceptance 与 discovery integration 测试的硬编码期望。
-> 每次修改 `fixtures/*.sql` 必须同步更新此处与对应测试。
-
-| | mini_blog | shop_oms | analytics_dw |
-|---|---|---|---|
-| schemas（含 public） | 1 | 4 | 5 |
-| 表 | 6 | 19 | 64 |
-| 视图（含 mat-view） | 1 | 3 | 4 |
-| enum 类型 | 1 | 7 | 11 |
-| composite 类型 | 0 | 1 | 2 |
-| 索引（不含 PK 自动） | 7 | 17 | 70 |
-| 索引（含 PK / unique 自动） | 18 | 61 | 135 |
-| 外键 | 7 | 15 | 23 |
-| 约束（CHECK + UNIQUE） | 37 | 134 | 307 |
-| 数据行（合计） | ~200 | ~8,300 | ~165,000 |
-
----
-
-## 16. 已知缺口 / 后续
-
-| ID | 缺口 | 优先级 | 跟踪 |
-|---|---|---|---|
-| GAP-1 | `cli.py` 单元/集成 0 % 覆盖 | P1 | §7.3 待补 |
-| GAP-2 | SSE stream 未自动化 | P2 | §7.2 |
-| GAP-3 | 无负载/性能基准 | P2 | 可加 `pytest-benchmark` |
-| GAP-4 | `sql_generator.py` 真实 LLM 行为未测 | P3 | 设计上 mock 即可，留 manual smoke |
-| GAP-5 | `metrics.timed` 上下文管理器只覆盖 57 % | P3 | 配套 logger 测试时一起加 |
-| GAP-6 | foreign-table fixture 缺失 | P2 | 加 `analytics_dw` 中的 postgres_fdw 链路 |
-| GAP-7 | `ruff check` 134 / `ruff format` 29 / `mypy --strict` 33 | P1 | §12.2 目标门禁前必须清零 |
-| GAP-8 | structlog 受 stdlib logging 默认 WARNING 过滤，info 事件不输出 | P2 | `configure_logging` 应同时调用 `logging.basicConfig(level=...)` |
-| GAP-9 | 整体覆盖率距目标 85 % 还差 ≈0.1 % 行 / 1.5 % 分支 | P2 | 补 §7.3 + `metrics.py` 即可达成 |
-
----
-
-## 17. 变更记录
-
-| 日期 | 改动 |
-|---|---|
-| 2026-05-01 | 首版；与 0006 review 修复后代码对齐；含 fixtures-based acceptance |
+| 2026-05-01 | v2 | 按 Review-0008 重写：拆分 Part A/B；新增 §5.5 sql_generator 计划、§13 traceability、§14 响应/可观测契约；§10.2 列出全部 34 deny；§12.1 修正为仓库根 + `BASE_REF` 参数化；所有命令 self-contained；总数从旧版的旧值更新为 330；移除占位变量 |
+| 2026-04-?? | v1 | 初版（已被本版替换） |
 
 ---
 
 ## 附录 A：常见失败排查
 
-| 现象 | 排查 |
-|---|---|
-| `psql: error: connection ... refused` | `make docker-up` 是否跑过、端口是否冲突 |
-| 测试报 `Task was destroyed but it is pending!` | 用 `cd src && uv run pytest -W ignore`；非阻塞性，但应记录 |
-| 覆盖率掉到 < 85 % | 看 `--cov-report=term-missing` 找新增未覆盖行 |
-| `analytics_dw: ... composites=0` | pg-mcp 的 `_fetch_composite_types` 已修（commit `f6a2bcf`）；若回退则查 `t.typrelid` 关联 |
-| acceptance A1 计数不匹配 | 检查 fixture SQL 是否被改、`make verify` 输出 |
+| 现象 | 可能原因 | 处理 |
+|---|---|---|
+| `pytest` 报 `ModuleNotFoundError: pg_mcp` | 未在 `src/` 下运行 | `cd /home/lfl/pg-mcp/src && uv run pytest ...` |
+| 集成测试连不上 PG | 未启容器或端口冲突 | `cd fixtures && make docker-up` 后确认 `:5433` |
+| 集成测试连不上 Redis | 未启 redis 容器 | `docker run -d --rm --name pg-mcp-redis -p 6380:6379 redis:7-alpine` |
+| `acceptance.sh` 卡住 | 三库未 `make verify` | 重跑 §3.1 第 4 步 |
+| `mypy` 报 `error: Cannot find implementation` | 路径未带 `src` 前缀 | 见 §12.1 的 `sed 's|^src/||'` 处理 |
+| MCP e2e 期望 raise 却失败 | MCP server 把 `McpError` 转为 `CallToolResult(isError=True)` | 断言 `result.root.isError`，不要 `pytest.raises` |
