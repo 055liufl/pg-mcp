@@ -37,6 +37,7 @@ from tests.conftest import (
     MockSchemaCache,
     MockSqlExecutor,
     MockSqlGenerator,
+    MockSqlRewriter,
     MockSqlValidator,
 )
 from pg_mcp.schema.retriever import SchemaRetriever
@@ -63,6 +64,7 @@ def _make_engine(
     result_val: MockResultValidator | None = None,
     retriever: Optional[SchemaRetriever] = None,
     settings: Optional[Settings] = None,
+    sql_rewriter: MockSqlRewriter | None = None,
 ) -> QueryEngine:
     sample_schema = DatabaseSchema(
         database="test_db",
@@ -77,6 +79,7 @@ def _make_engine(
     )
     return QueryEngine(
         sql_generator=sql_gen or MockSqlGenerator(sql="SELECT * FROM users"),
+        sql_rewriter=sql_rewriter or MockSqlRewriter(),
         sql_validator=sql_val or MockSqlValidator(valid=True),
         sql_executor=sql_exec or MockSqlExecutor(
             columns=["id"], column_types=["integer"], rows=[[1]], row_count=1

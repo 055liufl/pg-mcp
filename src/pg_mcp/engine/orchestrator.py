@@ -34,6 +34,7 @@ from pg_mcp.protocols import (
     SchemaCacheProtocol,
     SqlExecutorProtocol,
     SqlGeneratorProtocol,
+    SqlRewriterProtocol,
     SqlValidatorProtocol,
 )
 
@@ -99,6 +100,7 @@ class QueryEngine:
     def __init__(
         self,
         sql_generator: SqlGeneratorProtocol,
+        sql_rewriter: SqlRewriterProtocol,
         sql_validator: SqlValidatorProtocol,
         sql_executor: SqlExecutorProtocol,
         schema_cache: SchemaCacheProtocol,
@@ -108,6 +110,7 @@ class QueryEngine:
         settings: Settings,
     ) -> None:
         self._sql_gen = sql_generator
+        self._sql_rewriter = sql_rewriter
         self._sql_val = sql_validator
         self._sql_exec = sql_executor
         self._cache = schema_cache
@@ -214,6 +217,15 @@ class QueryEngine:
                 raise
 
             sql = gen_result.sql
+            rewritten_sql = self._sql_rewriter.rewrite(sql)
+            if rewritten_sql != sql:
+                log.info(
+                    "sql_rewritten",
+                    attempt=attempt,
+                    original=sanitize_sql(sql),
+                    rewritten=sanitize_sql(rewritten_sql),
+                )
+                sql = rewritten_sql
             log.info(
                 "sql_generated",
                 attempt=attempt,
@@ -299,6 +311,7 @@ class QueryEngine:
                         raise
 
                     sql = gen_result.sql
+                    sql = self._sql_rewriter.rewrite(sql)
                     val_result = self._sql_val.validate(
                         sql, schema, schema_names=schema_names
                     )

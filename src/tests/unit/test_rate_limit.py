@@ -22,6 +22,7 @@ from tests.conftest import (
     MockSchemaCache,
     MockSqlExecutor,
     MockSqlGenerator,
+    MockSqlRewriter,
     MockSqlValidator,
 )
 from pg_mcp.schema.retriever import SchemaRetriever
@@ -53,6 +54,7 @@ def _make_engine(settings: Optional[Settings] = None) -> QueryEngine:
     )
     return QueryEngine(
         sql_generator=MockSqlGenerator(sql="SELECT * FROM users"),
+        sql_rewriter=MockSqlRewriter(),
         sql_validator=MockSqlValidator(valid=True),
         sql_executor=MockSqlExecutor(
             columns=["id"], column_types=["integer"], rows=[[1]], row_count=1
@@ -131,6 +133,7 @@ class TestSemaphoreBehavior:
         validator = MockSqlValidator(valid=False, code="E_SQL_UNSAFE")
         engine = QueryEngine(
             sql_generator=MockSqlGenerator(sql="SELECT * FROM users"),
+            sql_rewriter=MockSqlRewriter(),
             sql_validator=validator,
             sql_executor=MockSqlExecutor(),
             schema_cache=MockSchemaCache(

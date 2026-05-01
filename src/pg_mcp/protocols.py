@@ -88,6 +88,30 @@ class SqlGeneratorProtocol(Protocol):
 
 
 @runtime_checkable
+class SqlRewriterProtocol(Protocol):
+    """Rewrite raw LLM-generated SQL to canonical PostgreSQL form.
+
+    Translates non-PostgreSQL function names from BigQuery / MySQL /
+    Snowflake dialects to their PostgreSQL equivalents (e.g.
+    ``timestamp_trunc`` → ``date_trunc``, ``safe_cast`` → ``CAST``).
+    Implementations must be a no-op for SQL that is already canonical
+    PostgreSQL and must fall back to the original SQL when parsing fails.
+    """
+
+    def rewrite(self, sql: str) -> str:
+        """Return SQL with cross-dialect functions rewritten.
+
+        Args:
+            sql: Raw SQL string from the LLM.
+
+        Returns:
+            The rewritten SQL, or the original SQL if no rewriting was
+            possible (e.g. parse error). Never raises.
+        """
+        ...
+
+
+@runtime_checkable
 class SqlValidatorProtocol(Protocol):
     """Validates SQL for safety before execution."""
 

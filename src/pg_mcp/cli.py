@@ -12,6 +12,7 @@ from pg_mcp.engine.orchestrator import QueryEngine
 from pg_mcp.engine.result_validator import ResultValidator
 from pg_mcp.engine.sql_executor import SqlExecutor
 from pg_mcp.engine.sql_generator import SqlGenerator
+from pg_mcp.engine.sql_rewriter import SqlRewriter
 from pg_mcp.engine.sql_validator import SqlValidator
 from pg_mcp.observability.logging import configure_logging
 from pg_mcp.schema.cache import SchemaCache
@@ -85,6 +86,7 @@ async def _run_server(transport: str, settings: Settings) -> None:
         )
 
         sql_generator = SqlGenerator(openai_client, settings)
+        sql_rewriter = SqlRewriter()
         sql_validator = SqlValidator()
         sql_executor = SqlExecutor(pool_mgr, settings)
         db_inference = DbInference(cache, settings)
@@ -104,6 +106,7 @@ async def _run_server(transport: str, settings: Settings) -> None:
 
         engine = QueryEngine(
             sql_generator=sql_generator,
+            sql_rewriter=sql_rewriter,
             sql_validator=sql_validator,
             sql_executor=sql_executor,
             schema_cache=cache,

@@ -105,9 +105,24 @@ class MockSqlValidator:
         return result
 
 
+class MockSqlRewriter:
+    """Mock SQL rewriter (passthrough by default).
+
+    Records ``rewrite()`` calls for assertions, returns input unchanged
+    unless an explicit override map is provided.
+    """
+
+    def __init__(self, overrides: Optional[dict[str, str]] = None):
+        self._overrides = overrides or {}
+        self.rewrite_calls: list[str] = []
+
+    def rewrite(self, sql: str) -> str:
+        self.rewrite_calls.append(sql)
+        return self._overrides.get(sql, sql)
+
+
 class MockSqlExecutor:
     """Mock SQL executor returning pre-configured results."""
-
     def __init__(
         self,
         columns: Optional[list[str]] = None,
