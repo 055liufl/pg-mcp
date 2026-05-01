@@ -1,2 +1,0 @@
-# Local Claude Code overrides — contains secrets, never commit
-.claude/settings.local.json
