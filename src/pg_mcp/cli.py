@@ -34,7 +34,7 @@ def main(transport: str) -> None:
     MCP clients.
     """
     settings = Settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, settings.log_format)
     asyncio.run(_run_server(transport, settings))
 
 

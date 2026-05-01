@@ -93,6 +93,7 @@ class Settings(BaseSettings):
 
     # Logging & transport
     log_level: str = "INFO"
+    log_format: str = "json"  # "json" | "console"
     transport: str = "stdio"
     sse_host: str = "0.0.0.0"
     sse_port: int = 8000
