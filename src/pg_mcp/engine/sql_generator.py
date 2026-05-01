@@ -77,7 +77,6 @@ class SqlGenerator:
                         {"role": "system", "content": "You generate PostgreSQL SQL queries."},
                         {"role": "user", "content": prompt},
                     ],
-                    temperature=0,
                 ),
                 timeout=self._settings.openai_timeout,
             )

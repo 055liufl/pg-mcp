@@ -449,7 +449,7 @@ class TestValidate:
 
         call_kwargs = mock_openai_client.chat.completions.create.call_args.kwargs
         assert call_kwargs["response_format"] == {"type": "json_object"}
-        assert call_kwargs["temperature"] == 0
+        assert "temperature" not in call_kwargs
 
     @pytest.mark.asyncio
     async def test_validate_timeout_raises_llm_timeout(self) -> None:
