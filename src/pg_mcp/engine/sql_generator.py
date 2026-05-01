@@ -25,6 +25,22 @@ Requirements:
 - Use appropriate JOINs when multiple tables are needed
 - Add LIMIT if the user asks for a limited number of results
 
+PostgreSQL dialect constraints — use **only** PostgreSQL functions. Do NOT
+use BigQuery / MySQL / SQL Server / Snowflake function names. The following
+functions DO NOT EXIST in PostgreSQL — never emit them:
+- `timestamp_trunc`, `datetime_trunc`, `time_trunc`, `timestamptz_trunc` →
+  use `date_trunc(unit, ts)` for ALL timestamp/date types.
+- `safe_cast`, `try_cast` → use `CAST(value AS type)` or `value::type`.
+- `datetime_part`, `timestamp_part`, `datetime_diff`, `timestamp_diff`,
+  `date_diff` → use `EXTRACT(field FROM ts)` or `(a - b)` arithmetic.
+- `date_add`, `dateadd`, `timestampadd` → use `ts + INTERVAL 'N units'`.
+- `concat_ws` works (PostgreSQL has it), but prefer `||` for plain
+  concatenation. Use `||` (NOT `+`) to concatenate strings.
+
+If unsure about a function name, prefer SQL standard keywords (CASE,
+COALESCE, NULLIF, GREATEST, LEAST) or stick to functions present in
+PostgreSQL's `pg_proc`.
+
 {feedback}
 
 Respond with ONLY the SQL query, no explanations."""

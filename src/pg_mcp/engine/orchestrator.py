@@ -41,6 +41,51 @@ if TYPE_CHECKING:
     from pg_mcp.schema.retriever import SchemaRetriever
 
 
+# Common non-PostgreSQL function hallucinations the LLM might emit, with
+# their PostgreSQL equivalents. Used to enrich validator-rejection feedback
+# so retries can converge faster.
+_FUNCTION_REPLACEMENT_HINTS: dict[str, str] = {
+    "timestamp_trunc": "date_trunc",
+    "datetime_trunc": "date_trunc",
+    "time_trunc": "date_trunc",
+    "timestamptz_trunc": "date_trunc",
+    "datetime_part": "EXTRACT(field FROM ts) or date_part",
+    "timestamp_part": "EXTRACT(field FROM ts) or date_part",
+    "datetime_diff": "(a - b) interval arithmetic",
+    "timestamp_diff": "(a - b) interval arithmetic",
+    "date_diff": "(a::date - b::date)",
+    "date_add": "ts + INTERVAL 'N units'",
+    "dateadd": "ts + INTERVAL 'N units'",
+    "timestampadd": "ts + INTERVAL 'N units'",
+    "safe_cast": "CAST(value AS type) or value::type",
+    "try_cast": "CAST(value AS type) or value::type",
+}
+
+
+def _build_validator_feedback(reason: str) -> str:
+    """Translate a validator rejection reason into actionable LLM feedback.
+
+    For "Function not in allowlist: X" rejections caused by non-PostgreSQL
+    function hallucinations, append a concrete replacement hint so the LLM
+    has a higher chance of producing correct PostgreSQL on retry.
+    """
+    base = f"Previous SQL was rejected: {reason}"
+    prefix = "Function not in allowlist: "
+    if not reason.startswith(prefix):
+        return base
+    bad_func = reason[len(prefix):].strip().lower()
+    hint = _FUNCTION_REPLACEMENT_HINTS.get(bad_func)
+    if hint is None:
+        return (
+            f"{base}. The function `{bad_func}` is not available in this "
+            f"PostgreSQL database. Use only PostgreSQL standard functions."
+        )
+    return (
+        f"{base}. `{bad_func}` does NOT exist in PostgreSQL — replace it "
+        f"with `{hint}`."
+    )
+
+
 class QueryEngine:
     """Main orchestrator for natural-language-to-SQL query execution.
 
@@ -193,7 +238,7 @@ class QueryEngine:
             )
 
             if attempt < self._settings.max_retries:
-                feedback = f"Previous SQL was rejected: {val_result.reason}"
+                feedback = _build_validator_feedback(val_result.reason or "")
             else:
                 if val_result.code == "E_SQL_PARSE":
                     raise SqlParseError(val_result.reason or "SQL parse failed")
