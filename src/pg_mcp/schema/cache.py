@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+from collections.abc import Callable
 from typing import Any
 
 import redis.asyncio as redis
@@ -20,6 +21,10 @@ from pg_mcp.schema.state import SchemaState
 log = structlog.get_logger()
 
 
+SchemaLoadedHook = Callable[[str, DatabaseSchema], None]
+SchemaInvalidatedHook = Callable[[str], None]
+
+
 class SchemaCache:
     """Redis-backed schema cache with singleflight loading.
 
@@ -28,6 +33,9 @@ class SchemaCache:
     - Singleflight: at most one loading task per database
     - Periodic background refresh
     - State machine tracking (UNLOADED -> LOADING -> READY/FAILED)
+    - Observer hooks invoked on load completion / invalidation so that
+      downstream caches (DB inference summaries, retrieval indices) can
+      stay in sync with the canonical Redis copy.
     """
 
     PREFIX = "pg_mcp"
@@ -46,6 +54,48 @@ class SchemaCache:
         self._inflight: dict[str, asyncio.Task[Any]] = {}
         self._inflight_lock = asyncio.Lock()
         self._refresh_task: asyncio.Task[Any] | None = None
+        self._loaded_hooks: list[SchemaLoadedHook] = []
+        self._invalidated_hooks: list[SchemaInvalidatedHook] = []
+
+    def add_loaded_hook(self, hook: SchemaLoadedHook) -> None:
+        """Register a callable invoked after each successful schema load.
+
+        The hook receives ``(database, schema)`` and runs synchronously
+        inside the load task. Exceptions raised by hooks are logged but
+        do not fail the load itself.
+        """
+        self._loaded_hooks.append(hook)
+
+    def add_invalidated_hook(self, hook: SchemaInvalidatedHook) -> None:
+        """Register a callable invoked when a schema is invalidated.
+
+        Triggered on refresh and on detected corruption.
+        """
+        self._invalidated_hooks.append(hook)
+
+    def _fire_loaded(
+        self, database: str, schema: DatabaseSchema
+    ) -> None:
+        for hook in self._loaded_hooks:
+            try:
+                hook(database, schema)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "schema_loaded_hook_failed",
+                    database=database,
+                    error=str(exc),
+                )
+
+    def _fire_invalidated(self, database: str) -> None:
+        for hook in self._invalidated_hooks:
+            try:
+                hook(database)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "schema_invalidated_hook_failed",
+                    database=database,
+                    error=str(exc),
+                )
 
     def set_discovered_databases(self, databases: list[str]) -> None:
         """Set the list of databases managed by this cache.
@@ -90,9 +140,13 @@ class SchemaCache:
                         msg="缓存数据损坏，触发重新加载",
                     )
                     await self._set_state(database, SchemaState.UNLOADED)
+                    self._fire_invalidated(database)
+                    state = SchemaState.UNLOADED
             else:
                 # State says READY but no data — consistency issue
                 await self._set_state(database, SchemaState.UNLOADED)
+                self._fire_invalidated(database)
+                state = SchemaState.UNLOADED
 
         if state in (
             SchemaState.UNLOADED,
@@ -107,21 +161,26 @@ class SchemaCache:
             retry_after_ms=2000,
         )
 
-    async def _ensure_loading(self, database: str) -> None:
-        """Singleflight: ensure at most one loading task per database."""
+    async def _ensure_loading(self, database: str) -> asyncio.Task[Any]:
+        """Singleflight: ensure at most one loading task per database.
+
+        Returns the task currently responsible for loading ``database``,
+        creating a new one if no live task exists. Callers may capture
+        the returned task to deterministically await load completion.
+        """
         async with self._inflight_lock:
-            if database in self._inflight:
-                task = self._inflight[database]
-                if not task.done():
-                    return
-            self._inflight[database] = asyncio.create_task(
-                self._do_load(database)
-            )
+            existing = self._inflight.get(database)
+            if existing is not None and not existing.done():
+                return existing
+            task = asyncio.create_task(self._do_load(database))
+            self._inflight[database] = task
+            return task
 
     async def _do_load(self, database: str) -> None:
         """Load schema from database and store in Redis.
 
         Updates state machine and persists error details on failure.
+        Fires loaded hooks once the schema is durably persisted.
         """
         await self._set_state(database, SchemaState.LOADING)
         try:
@@ -141,6 +200,7 @@ class SchemaCache:
                 f"{self.PREFIX}:error:{database}"
             )
             await self._set_state(database, SchemaState.READY)
+            self._fire_loaded(database, schema)
             log.info(
                 "schema_loaded",
                 database=database,
@@ -153,6 +213,7 @@ class SchemaCache:
                 str(e),
                 ex=3600,
             )
+            self._fire_invalidated(database)
             log.error("schema_load_failed", database=database, error=str(e))
             raise
         finally:
@@ -173,9 +234,11 @@ class SchemaCache:
         """
         targets = [database] if database else list(self._databases)
 
-        # Cancel old tasks and reset state
+        # Cancel old tasks, reset state, and notify downstream caches that
+        # the previously cached schema is no longer authoritative.
         for db in targets:
             await self._set_state(db, SchemaState.UNLOADED)
+            self._fire_invalidated(db)
             async with self._inflight_lock:
                 old_task = self._inflight.pop(db, None)
             if old_task is not None and not old_task.done():
@@ -185,9 +248,16 @@ class SchemaCache:
                 except asyncio.CancelledError:
                     pass
 
-        # Trigger fresh loads via singleflight
-        tasks = [self._ensure_loading(db) for db in targets]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Trigger fresh loads via singleflight, capturing each task
+        # so we can deterministically await completion below even if a
+        # task finishes (and pops itself from ``_inflight``) early.
+        load_tasks: list[asyncio.Task[Any]] = []
+        for db in targets:
+            task = await self._ensure_loading(db)
+            load_tasks.append(task)
+
+        if load_tasks:
+            await asyncio.gather(*load_tasks, return_exceptions=True)
 
         # Collect results based on final state
         succeeded: list[str] = []
@@ -197,12 +267,15 @@ class SchemaCache:
             if state == SchemaState.READY:
                 succeeded.append(db)
             else:
-                err = await self._redis.get(
+                err_raw = await self._redis.get(
                     f"{self.PREFIX}:error:{db}"
                 )
-                failed.append(
-                    {"database": db, "error": err or "unknown"}
+                err = (
+                    err_raw.decode("utf-8")
+                    if isinstance(err_raw, bytes)
+                    else err_raw or "unknown"
                 )
+                failed.append({"database": db, "error": err})
 
         return RefreshResult(succeeded=succeeded, failed=failed)
 
@@ -245,12 +318,18 @@ class SchemaCache:
         """Get schema state from Redis.
 
         Returns ``None`` if no state is recorded.
+
+        Note:
+            Redis may return ``bytes`` or ``str`` depending on the client
+            configuration. We explicitly decode ``bytes`` to ``str`` before
+            enum lookup.
         """
         raw = await self._redis.get(f"{self.PREFIX}:state:{database}")
         if raw is None:
             return None
         try:
-            return SchemaState(raw)
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            return SchemaState(text)
         except ValueError:
             return None
 

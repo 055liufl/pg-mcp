@@ -25,6 +25,7 @@ from pg_mcp.models.errors import (
 )
 from pg_mcp.models.request import QueryRequest
 from pg_mcp.models.response import AdminRefreshResult, QueryResponse
+from pg_mcp.models.schema import DatabaseSchema
 from pg_mcp.observability.logging import get_logger
 from pg_mcp.observability.sanitizer import sanitize_sql
 from pg_mcp.protocols import (
@@ -90,7 +91,7 @@ class QueryEngine:
         # 1. Concurrency control (non-blocking with short timeout)
         try:
             await asyncio.wait_for(self._semaphore.acquire(), timeout=0.01)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise RateLimitedError("Server is busy, please retry later")
 
         try:
@@ -147,6 +148,12 @@ class QueryEngine:
         else:
             schema_context = schema.to_prompt_text()
 
+        # Derive deterministic search_path: ``public`` first if it exists,
+        # then any remaining schemas in alphabetical order. Both validator
+        # and executor use this same list, so unqualified table references
+        # canonicalize to the same schema PostgreSQL would resolve.
+        schema_names = self._derive_schema_names(schema)
+
         # 7. SQL generation with validation retry loop
         feedback: str | None = None
         sql: str | None = None
@@ -171,7 +178,9 @@ class QueryEngine:
             )
 
             # 8. SQL validation
-            val_result = self._sql_val.validate(sql, schema)
+            val_result = self._sql_val.validate(
+                sql, schema, schema_names=schema_names
+            )
             if val_result.valid:
                 is_explain = val_result.is_explain
                 break
@@ -206,7 +215,7 @@ class QueryEngine:
         exec_start = time.monotonic()
         try:
             exec_result = await self._sql_exec.execute(
-                database, sql, is_explain=is_explain
+                database, sql, schema_names=schema_names, is_explain=is_explain
             )
         except SqlTimeoutError:
             raise
@@ -245,7 +254,9 @@ class QueryEngine:
                         raise
 
                     sql = gen_result.sql
-                    val_result = self._sql_val.validate(sql, schema)
+                    val_result = self._sql_val.validate(
+                        sql, schema, schema_names=schema_names
+                    )
                     if not val_result.valid:
                         if val_attempt < self._settings.max_retries:
                             val_feedback = (
@@ -259,7 +270,10 @@ class QueryEngine:
                     is_explain = val_result.is_explain
                     try:
                         exec_result = await self._sql_exec.execute(
-                            database, sql, is_explain=is_explain
+                            database,
+                            sql,
+                            schema_names=schema_names,
+                            is_explain=is_explain,
                         )
                     except SqlTimeoutError:
                         raise
@@ -313,3 +327,24 @@ class QueryEngine:
     def _elapsed_ms(self, start_time: float) -> int:
         """Calculate elapsed milliseconds since start_time."""
         return int((time.monotonic() - start_time) * 1000)
+
+    @staticmethod
+    def _derive_schema_names(schema: DatabaseSchema) -> list[str]:
+        """Build a deterministic ``search_path`` list from a loaded schema.
+
+        Places ``public`` first when present (matching PostgreSQL's
+        default), then any remaining schemas in alphabetical order. Both
+        validator and executor consume this list to ensure consistent
+        unqualified-table resolution.
+        """
+        seen: set[str] = set()
+        for table in schema.tables:
+            seen.add(table.schema_name)
+        for view in schema.views:
+            seen.add(view.schema_name)
+        ordered: list[str] = []
+        if "public" in seen:
+            ordered.append("public")
+            seen.discard("public")
+        ordered.extend(sorted(seen))
+        return ordered or ["public"]

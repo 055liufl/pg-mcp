@@ -328,3 +328,126 @@ class TestResponseFormat:
 
         assert parsed.database == "test_db"
         assert parsed.row_count == 1
+
+
+class TestServerToolCallback:
+    """Exercise the actual MCP tool callbacks registered by PgMcpServer."""
+
+    @pytest.mark.skipif(not MCP_AVAILABLE, reason="mcp package not available")
+    @pytest.mark.asyncio
+    async def test_call_tool_returns_text_content_with_query_response(
+        self,
+    ) -> None:
+        from mcp.types import CallToolRequest, CallToolRequestParams
+
+        engine = _make_engine()
+        server = PgMcpServer(engine)
+        handler = server._server.request_handlers[CallToolRequest]
+
+        request = CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="query",
+                arguments={"query": "List users", "database": "test_db"},
+            ),
+        )
+
+        result = await handler(request)
+        contents = result.root.content
+
+        assert len(contents) == 1
+        text_payload = contents[0].text
+        parsed = QueryResponse.model_validate_json(text_payload)
+        assert parsed.database == "test_db"
+        assert parsed.sql == "SELECT * FROM users"
+        assert parsed.error is None
+
+    @pytest.mark.skipif(not MCP_AVAILABLE, reason="mcp package not available")
+    @pytest.mark.asyncio
+    async def test_call_tool_converts_business_error_to_response(self) -> None:
+        from mcp.types import CallToolRequest, CallToolRequestParams
+
+        cache = MockSchemaCache(databases=["other_db"])
+        engine = _make_engine(cache=cache)
+        server = PgMcpServer(engine)
+        handler = server._server.request_handlers[CallToolRequest]
+
+        request = CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="query",
+                arguments={
+                    "query": "List users",
+                    "database": "missing_db",
+                },
+            ),
+        )
+
+        result = await handler(request)
+        parsed = QueryResponse.model_validate_json(
+            result.root.content[0].text
+        )
+
+        assert parsed.error is not None
+        assert parsed.error.code == "E_DB_NOT_FOUND"
+
+    @pytest.mark.skipif(not MCP_AVAILABLE, reason="mcp package not available")
+    @pytest.mark.asyncio
+    async def test_call_tool_unknown_name_returns_error_result(self) -> None:
+        from mcp.types import CallToolRequest, CallToolRequestParams
+
+        engine = _make_engine()
+        server = PgMcpServer(engine)
+        handler = server._server.request_handlers[CallToolRequest]
+
+        request = CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(name="unknown", arguments={}),
+        )
+
+        result = await handler(request)
+        # MCP wraps protocol-level errors into a CallToolResult with
+        # ``isError=True`` so clients can render them.
+        assert result.root.isError is True
+        assert "Unknown tool" in result.root.content[0].text
+
+    @pytest.mark.skipif(not MCP_AVAILABLE, reason="mcp package not available")
+    @pytest.mark.asyncio
+    async def test_call_tool_invalid_arguments_returns_error_result(
+        self,
+    ) -> None:
+        from mcp.types import CallToolRequest, CallToolRequestParams
+
+        engine = _make_engine()
+        server = PgMcpServer(engine)
+        handler = server._server.request_handlers[CallToolRequest]
+
+        # ``query`` is required when no admin_action is provided
+        request = CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(name="query", arguments={}),
+        )
+
+        result = await handler(request)
+        assert result.root.isError is True
+
+    @pytest.mark.skipif(not MCP_AVAILABLE, reason="mcp package not available")
+    @pytest.mark.asyncio
+    async def test_list_tools_advertises_query_tool(self) -> None:
+        from mcp.types import ListToolsRequest
+
+        engine = _make_engine()
+        server = PgMcpServer(engine)
+        handler = server._server.request_handlers[ListToolsRequest]
+
+        result = await handler(
+            ListToolsRequest(method="tools/list", params=None)
+        )
+
+        tools = result.root.tools
+        assert len(tools) == 1
+        assert tools[0].name == "query"
+        properties = tools[0].inputSchema["properties"]
+        assert "query" in properties
+        assert "database" in properties
+        assert properties["return_type"]["enum"] == ["sql", "result"]

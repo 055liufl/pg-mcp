@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import Any
 
 import asyncpg
 import structlog
@@ -82,7 +81,7 @@ class ConnectionPoolManager:
                     max_size=self._settings.db_pool_size,
                     command_timeout=self._settings.query_timeout,
                 )
-            except (asyncpg.PostgresError, OSError, asyncio.TimeoutError) as e:
+            except (TimeoutError, asyncpg.PostgresError, OSError) as e:
                 last_error = e
                 if attempt == max_retries - 1:
                     break

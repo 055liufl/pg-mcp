@@ -212,14 +212,20 @@ class TestResultValidation:
 
     @pytest.mark.asyncio
     async def test_result_validation_fix_triggers_regeneration(self) -> None:
+        # First verdict is "fix", second (after re-execution) is "pass"
         result_validator = MockResultValidator(
-            should_validate=True, verdict="fix", reason="Missing LIMIT"
+            should_validate=True,
+            verdict_sequence=["fix", "pass"],
+            reason="Missing LIMIT",
+            suggested_sql="SELECT * FROM users LIMIT 10",
         )
-        # After fix, pass
-        result_validator._verdict = "pass"
         generator = MockSqlGenerator(sql="SELECT * FROM users")
+        executor = MockSqlExecutor(
+            columns=["id"], column_types=["integer"], rows=[[1]], row_count=1
+        )
         engine = _make_engine(
             sql_gen=generator,
+            sql_exec=executor,
             result_val=result_validator,
             settings=_make_settings(enable_validation=True),
         )
@@ -227,8 +233,44 @@ class TestResultValidation:
 
         response = await engine.execute(request)
 
-        assert response.sql is not None
+        # Validation should have been used and the fix loop exercised:
+        # - generator called once for initial + once for fix = 2 generations
+        # - executor called once for initial + once for fix = 2 executions
+        # - validator's validate() called once for initial fix and once
+        #   to confirm the fixed result, so 2 invocations total.
         assert response.validation_used is True
+        assert len(generator.generate_calls) == 2
+        assert len(executor.execute_calls) == 2
+        assert len(result_validator.validate_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_result_validation_fix_loop_passes_schema_names(self) -> None:
+        # Ensure the orchestrator passes schema_names on EVERY execute,
+        # including the fix-loop re-execution after a "fix" verdict.
+        result_validator = MockResultValidator(
+            should_validate=True,
+            verdict_sequence=["fix", "pass"],
+            reason="Bad SQL",
+        )
+        generator = MockSqlGenerator(sql="SELECT * FROM users")
+        executor = MockSqlExecutor(
+            columns=["id"], column_types=["integer"], rows=[[1]], row_count=1
+        )
+        engine = _make_engine(
+            sql_gen=generator,
+            sql_exec=executor,
+            result_val=result_validator,
+            settings=_make_settings(enable_validation=True),
+        )
+        request = QueryRequest(query="List users", database="test_db")
+
+        await engine.execute(request)
+
+        assert len(executor.execute_calls) == 2
+        # Each execute call carries schema_names with at least "public".
+        for _db, _sql, schema_names, _is_explain in executor.execute_calls:
+            assert schema_names is not None
+            assert "public" in schema_names
 
     @pytest.mark.asyncio
     async def test_result_validation_fail_raises_error(self) -> None:
@@ -324,6 +366,63 @@ class TestErrorPropagation:
 
 class TestSchemaRetrieval:
     """Tests for schema context selection."""
+
+    @pytest.mark.asyncio
+    async def test_executor_receives_schema_names(self) -> None:
+        # Multi-schema schemas: search_path must include all of them,
+        # with ``public`` first when present.
+        schema = DatabaseSchema(
+            database="test_db",
+            tables=[
+                TableInfo(
+                    schema_name="public",
+                    table_name="users",
+                    columns=[ColumnInfo(name="id", type="integer", nullable=False)],
+                ),
+                TableInfo(
+                    schema_name="app",
+                    table_name="orders",
+                    columns=[ColumnInfo(name="id", type="integer", nullable=False)],
+                ),
+            ],
+            loaded_at=datetime.now(timezone.utc),
+        )
+        cache = MockSchemaCache(schemas={"test_db": schema}, databases=["test_db"])
+        executor = MockSqlExecutor(
+            columns=["id"], column_types=["integer"], rows=[[1]], row_count=1
+        )
+        engine = _make_engine(cache=cache, sql_exec=executor)
+        request = QueryRequest(query="List users", database="test_db")
+
+        await engine.execute(request)
+
+        assert len(executor.execute_calls) == 1
+        _db, _sql, schema_names, _is_explain = executor.execute_calls[0]
+        assert schema_names == ["public", "app"]
+
+    @pytest.mark.asyncio
+    async def test_validator_receives_schema_names(self) -> None:
+        schema = DatabaseSchema(
+            database="test_db",
+            tables=[
+                TableInfo(
+                    schema_name="app",
+                    table_name="orders",
+                    columns=[ColumnInfo(name="id", type="integer", nullable=False)],
+                ),
+            ],
+            loaded_at=datetime.now(timezone.utc),
+        )
+        cache = MockSchemaCache(schemas={"test_db": schema}, databases=["test_db"])
+        validator = MockSqlValidator(valid=True)
+        engine = _make_engine(cache=cache, sql_val=validator)
+        request = QueryRequest(query="List orders", database="test_db")
+
+        await engine.execute(request)
+
+        assert len(validator.validate_calls) == 1
+        _sql, _schema, schema_names = validator.validate_calls[0]
+        assert schema_names == ["app"]
 
     @pytest.mark.asyncio
     async def test_small_schema_uses_full_context(self) -> None:

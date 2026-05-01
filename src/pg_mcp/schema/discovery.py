@@ -7,7 +7,7 @@ batched SQL statements per database.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
@@ -335,18 +335,25 @@ class SchemaDiscovery:
                 row["column_name"]
             )
 
-        # Group columns by (schema, table)
-        col_groups: dict[
+        # Group columns by (schema, table) and separate tables from views
+        table_col_groups: dict[
             tuple[str, str], list[tuple[asyncpg.Record, bool]]
+        ] = defaultdict(list)
+        view_col_groups: dict[
+            tuple[str, str], list[asyncpg.Record]
         ] = defaultdict(list)
         for row in tables_and_cols:
             key = (row["table_schema"], row["table_name"])
             is_pk = row["column_name"] in pk_lookup.get(key, set())
-            col_groups[key].append((row, is_pk))
+            table_type = row.get("table_type", "BASE TABLE")
+            if table_type == "VIEW":
+                view_col_groups[key].append(row)
+            else:
+                table_col_groups[key].append((row, is_pk))
 
-        # Build TableInfo list
+        # Build TableInfo list (BASE TABLE only)
         tables: list[TableInfo] = []
-        for (schema_name, table_name), cols in col_groups.items():
+        for (schema_name, table_name), cols in table_col_groups.items():
             columns: list[ColumnInfo] = []
             table_comment: str | None = None
             is_foreign = False
@@ -467,14 +474,26 @@ class SchemaDiscovery:
             for (schema_name, type_name), attrs in composite_groups.items()
         ]
 
-        # Build ViewInfo list
+        # Build ViewInfo list (with columns from tables_and_cols)
         view_list: list[ViewInfo] = []
         for row in views:
+            key = (row["schema_name"], row["view_name"])
+            view_columns: list[ColumnInfo] = []
+            for col_row in view_col_groups.get(key, []):
+                view_columns.append(
+                    ColumnInfo(
+                        name=col_row["column_name"],
+                        type=col_row["data_type"],
+                        nullable=col_row["is_nullable"] == "YES",
+                        default=col_row["column_default"],
+                        comment=col_row["column_comment"],
+                    )
+                )
             view_list.append(
                 ViewInfo(
                     schema_name=row["schema_name"],
                     view_name=row["view_name"],
-                    columns=[],  # Simplified: columns not fetched for views
+                    columns=view_columns,
                     definition=row["definition"],
                     is_materialized=row["is_materialized"],
                 )
@@ -490,7 +509,7 @@ class SchemaDiscovery:
             enum_types=enum_list,
             composite_types=composite_list,
             allowed_functions=allowed_functions,
-            loaded_at=datetime.now(timezone.utc),
+            loaded_at=datetime.now(UTC),
         )
 
     def _parse_index_def(

@@ -11,7 +11,6 @@ from pg_mcp.config import Settings
 from pg_mcp.models.errors import LlmError, LlmTimeoutError
 from pg_mcp.protocols import SqlGenerationResult
 
-
 SQL_GENERATION_PROMPT = """You are a PostgreSQL SQL expert. Given the database schema below, generate a SQL query to answer the user's question.
 
 Database Schema:
@@ -82,7 +81,7 @@ class SqlGenerator:
                 ),
                 timeout=self._settings.openai_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise LlmTimeoutError("SQL generation LLM call timed out")
         except openai.APIError as e:
             raise LlmError(f"SQL generation LLM call failed: {e}")

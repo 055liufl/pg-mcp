@@ -26,7 +26,7 @@ class QueryRequest(BaseModel):
     admin_action: Literal["refresh_schema"] | None = None
 
     @model_validator(mode="after")
-    def _check_query_or_admin(self) -> "QueryRequest":
+    def _check_query_or_admin(self) -> QueryRequest:
         """Ensure query is present unless an admin action is requested."""
         if not self.admin_action:
             stripped = self.query.strip()

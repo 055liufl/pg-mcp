@@ -85,10 +85,15 @@ class MockSqlValidator:
         self._is_explain = is_explain
         self._toggle_on_call = toggle_on_call
         self._current_valid = valid
-        self.validate_calls: list[tuple[str, Optional[object]]] = []
+        self.validate_calls: list[tuple[str, Optional[object], Optional[list[str]]]] = []
 
-    def validate(self, sql: str, schema: Optional[DatabaseSchema] = None) -> ValidationResult:
-        self.validate_calls.append((sql, schema))
+    def validate(
+        self,
+        sql: str,
+        schema: Optional[DatabaseSchema] = None,
+        schema_names: Optional[list[str]] = None,
+    ) -> ValidationResult:
+        self.validate_calls.append((sql, schema, schema_names))
         result = ValidationResult(
             valid=self._current_valid,
             code=None if self._current_valid else self._code,
@@ -120,7 +125,7 @@ class MockSqlExecutor:
         self._truncated = truncated
         self._truncated_reason = truncated_reason
         self._raise_error = raise_error
-        self.execute_calls: list[tuple[str, str, bool]] = []
+        self.execute_calls: list[tuple[str, str, Optional[list[str]], bool]] = []
 
     async def execute(
         self,
@@ -129,7 +134,7 @@ class MockSqlExecutor:
         schema_names: Optional[list[str]] = None,
         is_explain: bool = False,
     ) -> ExecutionResult:
-        self.execute_calls.append((database, sql, is_explain))
+        self.execute_calls.append((database, sql, schema_names, is_explain))
         if self._raise_error:
             raise self._raise_error
         return ExecutionResult(
@@ -189,7 +194,12 @@ class MockDbInference:
 
 
 class MockResultValidator:
-    """Mock result validator with configurable verdict."""
+    """Mock result validator with configurable verdict.
+
+    Supports both a single fixed verdict and a sequence of verdicts so
+    tests can exercise the orchestrator's fix loop (e.g. ``fix`` then
+    ``pass``).
+    """
 
     def __init__(
         self,
@@ -198,12 +208,16 @@ class MockResultValidator:
         reason: Optional[str] = None,
         suggested_sql: Optional[str] = None,
         raise_error: Optional[Exception] = None,
+        verdict_sequence: Optional[list[str]] = None,
     ):
         self._should_validate = should_validate
         self._verdict = verdict
         self._reason = reason
         self._suggested_sql = suggested_sql
         self._raise_error = raise_error
+        # When provided, validate() advances through this sequence on each
+        # call, falling back to the last verdict once exhausted.
+        self._verdict_sequence: list[str] = list(verdict_sequence or [])
         self.should_validate_calls: list[tuple] = []
         self.validate_calls: list[tuple] = []
 
@@ -227,8 +241,12 @@ class MockResultValidator:
         self.validate_calls.append((user_query, sql, result, schema))
         if self._raise_error:
             raise self._raise_error
+        if self._verdict_sequence:
+            verdict = self._verdict_sequence.pop(0)
+        else:
+            verdict = self._verdict
         return ValidationVerdict(
-            verdict=self._verdict,
+            verdict=verdict,
             reason=self._reason,
             suggested_sql=self._suggested_sql,
         )

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Set
-
 import re
 from dataclasses import dataclass
 
@@ -12,7 +10,6 @@ from pg_mcp.models.schema import (
     ForeignKeyInfo,
     TableInfo,
 )
-
 
 # Simple stopwords for keyword extraction
 _STOPWORDS: set[str] = {
@@ -33,13 +30,13 @@ _STOPWORDS: set[str] = {
     "your", "yours", "yourself", "yourselves", "he", "him",
     "his", "himself", "she", "her", "hers", "herself", "we",
     "us", "our", "ours", "ourselves", "i", "me", "my", "myself",
-    "my", "mine", "s", "t", "don", "doesn", "didn", "wasn",
+    "mine", "s", "t", "don", "doesn", "didn", "wasn",
     "weren", "won", "wouldn", "couldn", "shouldn", "isn", "aren",
     "hasn", "haven", "hadn", "needn", "mustn", "shan", "mightn",
 }
 
 
-TokenSet = Set[str]
+TokenSet = set[str]
 
 
 @dataclass(frozen=True)
@@ -61,14 +58,34 @@ class SchemaRetriever:
     For schemas with many tables, builds a precomputed ``TableIndex``
     per table and uses keyword matching to return only the most
     relevant tables for a given natural language query.
+
+    The retriever owns a per-database cache of precomputed indices so
+    they can be built once per schema load (via the cache observer
+    hooks) and reused across requests.
     """
 
     def __init__(self, max_tables_for_full: int = 50) -> None:
         self._max_tables = max_tables_for_full
+        self._indices_by_db: dict[str, list[TableIndex]] = {}
 
     def should_use_retrieval(self, schema: DatabaseSchema) -> bool:
         """Return ``True`` if the schema is large enough to warrant retrieval."""
         return schema.table_count() > self._max_tables
+
+    def install_index(self, database: str, schema: DatabaseSchema) -> None:
+        """Build and store the retrieval index for ``database``.
+
+        Intended to be wired as a ``SchemaCache`` loaded hook so that
+        retrieval indexes stay in sync with the canonical Redis copy.
+        """
+        self._indices_by_db[database] = self.build_index(schema)
+
+    def invalidate_index(self, database: str) -> None:
+        """Drop the cached retrieval index for ``database``.
+
+        Intended to be wired as a ``SchemaCache`` invalidated hook.
+        """
+        self._indices_by_db.pop(database, None)
 
     def build_index(self, schema: DatabaseSchema) -> list[TableIndex]:
         """Build precomputed retrieval indices for all tables in a schema.
@@ -109,18 +126,22 @@ class SchemaRetriever:
 
         Args:
             user_query: Natural language query from the user.
-            schema: Full database schema (must have ``_retrieval_index``
-                precomputed, or indices will be built on the fly).
+            schema: Full database schema. Indices precomputed via
+                :meth:`install_index` are reused; otherwise indices are
+                built on demand.
 
         Returns:
             Formatted schema text suitable for LLM prompt context.
         """
         keywords = self._extract_keywords(user_query)
 
-        # Get or build index
-        index_attr = getattr(schema, "_retrieval_index", None)
-        if index_attr is not None:
-            indices: list[TableIndex] = index_attr
+        # Prefer the precomputed per-database index; fall back to building
+        # on demand for callers that did not install one.
+        cached_indices = self._indices_by_db.get(schema.database)
+        if cached_indices is not None and len(cached_indices) == len(
+            schema.tables
+        ):
+            indices: list[TableIndex] = cached_indices
         else:
             indices = self.build_index(schema)
 

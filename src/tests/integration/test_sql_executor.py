@@ -244,7 +244,17 @@ class TestExecute:
 
             mock_conn = mock_pool.acquire.return_value.__aenter__.return_value
             execute_calls = [str(call.args[0]) for call in mock_conn.execute.call_args_list]
-            assert any("search_path" in c for c in execute_calls)
+            # Must use SET LOCAL inside the readonly transaction so the
+            # search_path change is rolled back at end-of-transaction
+            # and never bleeds across queries on a recycled connection.
+            search_path_calls = [c for c in execute_calls if "search_path" in c]
+            assert search_path_calls, "search_path must be configured"
+            assert all(
+                "SET LOCAL" in c for c in search_path_calls
+            ), "search_path must use SET LOCAL"
+            # Identifiers must be quoted to defend against injection.
+            assert any('"public"' in c for c in search_path_calls)
+            assert any('"app"' in c for c in search_path_calls)
 
 
 class TestResultProcessing:

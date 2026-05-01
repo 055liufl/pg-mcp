@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 
 from pg_mcp.config import Settings
@@ -14,7 +13,6 @@ from pg_mcp.models.errors import (
 )
 from pg_mcp.models.schema import DatabaseSchema
 from pg_mcp.protocols import SchemaCacheProtocol
-
 
 # Stop words for keyword extraction (simple English + common SQL terms)
 _STOP_WORDS: frozenset[str] = frozenset({
@@ -32,17 +30,16 @@ _STOP_WORDS: frozenset[str] = frozenset({
     "theirs", "themselves", "you", "your", "yours", "yourself", "yourselves",
     "he", "him", "his", "himself", "she", "her", "hers", "herself", "we",
     "us", "our", "ours", "ourselves", "i", "me", "my", "mine", "myself",
-    "show", "list", "get", "find", "give", "tell", "me", "please", "query",
-    "select", "from", "where", "order", "group", "having", "limit", "offset",
+    "show", "list", "get", "find", "give", "tell", "please", "query",
+    "select", "order", "group", "having", "limit", "offset",
     "join", "inner", "outer", "left", "right", "full", "cross", "natural",
-    "on", "using", "as", "distinct", "all", "union", "intersect", "except",
+    "using", "distinct", "union", "intersect", "except",
     "count", "sum", "avg", "min", "max", "database", "table", "column",
 })
 
 
-from typing import Tuple
 
-_ScoreEntry = Tuple[str, float]
+_ScoreEntry = tuple[str, float]
 
 
 @dataclass

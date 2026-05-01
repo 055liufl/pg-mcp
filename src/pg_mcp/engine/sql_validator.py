@@ -5,10 +5,8 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
-from pg_mcp.models.errors import SqlParseError, SqlUnsafeError
 from pg_mcp.models.schema import DatabaseSchema
 from pg_mcp.protocols import ValidationResult
-
 
 # Explicitly denied high-risk functions (rejected even if in pg_proc whitelist)
 DENY_FUNCTIONS: frozenset[str] = frozenset({
@@ -67,10 +65,24 @@ _ALLOWED_STATEMENT_TYPES: tuple[type[exp.Expression], ...] = (
 )
 
 
-def _canonicalize_table_id(table: exp.Table) -> str:
-    """Normalize a table identifier to 'schema.name' lowercase form."""
-    schema = (table.db or "public").lower().strip('"')
+def _canonicalize_table_id(
+    table: exp.Table,
+    table_lookup: dict[str, str] | None = None,
+    default_schema: str = "public",
+) -> str:
+    """Normalize a table identifier to ``schema.name`` lowercase form.
+
+    For unqualified tables, resolves the schema using ``table_lookup`` (a
+    map from lowercase table name to the first matching schema in
+    search_path order), falling back to ``default_schema``.
+    """
     name = table.name.lower().strip('"')
+    if table.db:
+        schema = table.db.lower().strip('"')
+    elif table_lookup is not None and name in table_lookup:
+        schema = table_lookup[name]
+    else:
+        schema = default_schema
     return f"{schema}.{name}"
 
 
@@ -85,12 +97,19 @@ class SqlValidator:
     - Foreign table access prohibition
     """
 
-    def validate(self, sql: str, schema: DatabaseSchema | None = None) -> ValidationResult:
+    def validate(
+        self,
+        sql: str,
+        schema: DatabaseSchema | None = None,
+        schema_names: list[str] | None = None,
+    ) -> ValidationResult:
         """Validate a SQL string for safety.
 
         Args:
             sql: The SQL query to validate.
             schema: Optional database schema for function whitelist and foreign table checks.
+            schema_names: Optional ordered search-path schema list, used to
+                resolve unqualified tables consistently with the executor.
 
         Returns:
             ValidationResult indicating whether the SQL is safe to execute.
@@ -176,8 +195,25 @@ class SqlValidator:
         if schema is not None:
             foreign_ids = schema.foreign_table_ids()
             if foreign_ids:
+                # Build a search-path-aware lookup so unqualified tables
+                # resolve to the same schema PostgreSQL would pick.
+                effective_search_path: list[str] = (
+                    list(schema_names) if schema_names else ["public"]
+                )
+                table_lookup = self._build_table_lookup(
+                    schema, effective_search_path
+                )
+                default_schema = (
+                    effective_search_path[0]
+                    if effective_search_path
+                    else "public"
+                )
                 for table in ast.find_all(exp.Table):
-                    table_id = _canonicalize_table_id(table)
+                    table_id = _canonicalize_table_id(
+                        table,
+                        table_lookup=table_lookup,
+                        default_schema=default_schema,
+                    )
                     if table_id in foreign_ids:
                         return ValidationResult(
                             valid=False,
@@ -186,6 +222,36 @@ class SqlValidator:
                         )
 
         return ValidationResult(valid=True)
+
+    @staticmethod
+    def _build_table_lookup(
+        schema: DatabaseSchema,
+        search_path: list[str],
+    ) -> dict[str, str]:
+        """Build a map from lowercase table name to the first matching schema.
+
+        Resolution follows ``search_path`` order, so that an unqualified
+        table reference is canonicalized to the schema PostgreSQL would
+        select at execution time.
+        """
+        # Group tables by name -> set of schemas that contain that table
+        name_to_schemas: dict[str, set[str]] = {}
+        for table in schema.tables:
+            name_to_schemas.setdefault(table.table_name.lower(), set()).add(
+                table.schema_name.lower()
+            )
+        for view in schema.views:
+            name_to_schemas.setdefault(view.view_name.lower(), set()).add(
+                view.schema_name.lower()
+            )
+
+        lookup: dict[str, str] = {}
+        for name, schemas in name_to_schemas.items():
+            for sp in search_path:
+                if sp.lower() in schemas:
+                    lookup[name] = sp.lower()
+                    break
+        return lookup
 
     def _extract_func_name(self, node: exp.Func | exp.Anonymous) -> str:
         """Extract the function name from an AST function node.

@@ -68,6 +68,22 @@ def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
             )
         return Response(status_code=200)
 
+    async def handle_refresh(request: Request) -> Response:
+        """Trigger schema refresh and return the result.
+
+        Args:
+            request: The incoming HTTP request.
+
+        Returns:
+            JSON response with succeeded/failed database lists.
+        """
+        result = await cache.refresh()
+        return Response(
+            content=result.model_dump_json(),
+            media_type="application/json",
+            status_code=200,
+        )
+
     routes: list[Route | Mount] = [
         Route(
             "/health",
@@ -77,6 +93,7 @@ def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
             ),
         ),
         Route("/sse", endpoint=handle_sse),
+        Route("/admin/refresh", endpoint=handle_refresh, methods=["POST"]),
         Mount("/messages", app=sse_transport.handle_post_message),
     ]
 

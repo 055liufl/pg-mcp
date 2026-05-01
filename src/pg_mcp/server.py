@@ -1,9 +1,8 @@
 """MCP Server layer: tool registration, error translation, and transport runners."""
 
-from mcp.server import Server
-from mcp.server.models import INVALID_PARAMS
-from mcp.types import TextContent, Tool
 from mcp import McpError
+from mcp.server import Server
+from mcp.types import INVALID_PARAMS, ErrorData, TextContent, Tool
 from pydantic import ValidationError
 
 from pg_mcp.engine.orchestrator import QueryEngine
@@ -96,12 +95,16 @@ class PgMcpServer:
                 McpError: For protocol-level errors (unknown tool, invalid params).
             """
             if name != "query":
-                raise McpError(INVALID_PARAMS, f"Unknown tool: {name}")
+                raise McpError(
+                    ErrorData(code=INVALID_PARAMS, message=f"Unknown tool: {name}")
+                )
 
             try:
                 request = QueryRequest(**arguments)
             except ValidationError as exc:
-                raise McpError(INVALID_PARAMS, str(exc)) from exc
+                raise McpError(
+                    ErrorData(code=INVALID_PARAMS, message=str(exc))
+                ) from exc
 
             try:
                 response = await self._engine.execute(request)

@@ -87,8 +87,20 @@ async def _run_server(transport: str, settings: Settings) -> None:
         sql_generator = SqlGenerator(openai_client, settings)
         sql_validator = SqlValidator()
         sql_executor = SqlExecutor(pool_mgr, settings)
-        db_inference = DbInference(cache, retriever)
+        db_inference = DbInference(cache, settings)
         result_validator = ResultValidator(openai_client, settings)
+
+        # Wire schema-load observers so that downstream caches (DB
+        # inference summaries, retrieval indices) are rebuilt on each
+        # successful schema load and dropped on invalidation/refresh.
+        cache.add_loaded_hook(
+            lambda db, schema: db_inference.build_summary(schema)
+        )
+        cache.add_loaded_hook(
+            lambda db, schema: retriever.install_index(db, schema)
+        )
+        cache.add_invalidated_hook(db_inference.remove_summary)
+        cache.add_invalidated_hook(retriever.invalidate_index)
 
         engine = QueryEngine(
             sql_generator=sql_generator,

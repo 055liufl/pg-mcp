@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
 import asyncpg
-from datetime import datetime
 
 from pg_mcp.config import Settings
 from pg_mcp.db.pool import ConnectionPoolManager
-from pg_mcp.models.errors import SqlExecuteError, SqlTimeoutError, ResultTooLargeError
+from pg_mcp.models.errors import ResultTooLargeError, SqlExecuteError, SqlTimeoutError
 from pg_mcp.protocols import ExecutionResult
 
 
@@ -91,14 +91,17 @@ class SqlExecutor:
             )
             await conn.execute("SET max_parallel_workers_per_gather = 2")
 
-            if schema_names:
-                safe_schemas = ",".join(_quote_ident(s) for s in schema_names)
-                await conn.execute(f"SET search_path = {safe_schemas}")
-
             limited_sql = self._apply_limit(sql, is_explain)
 
             try:
                 async with conn.transaction(readonly=True):
+                    if schema_names:
+                        safe_schemas = ",".join(
+                            _quote_ident(s) for s in schema_names
+                        )
+                        await conn.execute(
+                            f"SET LOCAL search_path = {safe_schemas}"
+                        )
                     rows = await conn.fetch(limited_sql)
             except asyncpg.QueryCanceledError:
                 raise SqlTimeoutError(f"Query timed out ({timeout_s}s)")

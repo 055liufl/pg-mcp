@@ -421,7 +421,7 @@ class TestCompression:
 
         async def mock_get(key: str) -> Optional[bytes]:
             if "state" in key:
-                return "ready"
+                return b"ready"
             if "schema" in key:
                 return b"not-valid-gzip-data"
             return None
@@ -442,7 +442,8 @@ class TestCompression:
             # Wait for background task to complete
             await asyncio.sleep(0.1)
 
-        assert load_count == 0  # Old task still in-flight, reload queued
+        # Corrupted blob should reset state and trigger a reload
+        assert load_count == 1
 
 
 class TestWarmup:
@@ -503,3 +504,117 @@ class TestClose:
 
             await asyncio.sleep(0.05)
             assert cancel_detected is True
+
+
+class TestRedisBytesRegression:
+    """Regressions for Redis returning bytes vs str values."""
+
+    @pytest.mark.asyncio
+    async def test_get_state_decodes_bytes_responses(
+        self,
+        cache: SchemaCache,
+        mock_redis: AsyncMock,
+        sample_schema: DatabaseSchema,
+    ) -> None:
+        """SchemaState lookup must succeed when Redis returns bytes."""
+        compressed = gzip.compress(
+            sample_schema.model_dump_json().encode("utf-8")
+        )
+
+        async def mock_get(key: str) -> bytes | None:
+            if "state" in key:
+                return b"ready"  # canonical bytes payload from redis-py
+            if "schema" in key:
+                return compressed
+            return None
+
+        mock_redis.get.side_effect = mock_get
+        cache.set_discovered_databases(["test_db"])
+
+        result = await cache.get_schema("test_db")
+
+        assert result.database == "test_db"
+
+    @pytest.mark.asyncio
+    async def test_refresh_reports_bytes_error_value(
+        self,
+        cache: SchemaCache,
+        mock_redis: AsyncMock,
+    ) -> None:
+        """Errors stored as bytes should be decoded into the RefreshResult."""
+
+        # Mock state lookup to always return FAILED so refresh observes it
+        async def mock_get(key: str) -> bytes | None:
+            if "state" in key:
+                return b"failed"
+            if "error" in key:
+                return b"connection refused"
+            return None
+
+        mock_redis.get.side_effect = mock_get
+
+        async def failing_load(database: str) -> DatabaseSchema:
+            raise RuntimeError("connection refused")
+
+        with patch.object(cache._discovery, "load_schema", new=failing_load):
+            cache.set_discovered_databases(["test_db"])
+
+            result = await cache.refresh("test_db")
+
+        assert result.failed
+        assert result.failed[0]["database"] == "test_db"
+        # Error string must be decoded, not a repr like ``b'...'``.
+        assert "connection refused" in result.failed[0]["error"]
+        assert "b'" not in result.failed[0]["error"]
+
+
+class TestRefreshCompletion:
+    """Regression: refresh() must wait for the actual loads to settle."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_awaits_load_to_completion(
+        self,
+        cache: SchemaCache,
+        mock_redis: AsyncMock,
+        sample_schema: DatabaseSchema,
+    ) -> None:
+        """refresh() returns only after each load task has finished."""
+        load_started = asyncio.Event()
+        load_completed = False
+
+        async def slow_load(database: str) -> DatabaseSchema:
+            nonlocal load_completed
+            load_started.set()
+            await asyncio.sleep(0.1)
+            load_completed = True
+            return sample_schema
+
+        # Track state writes so refresh sees the right transitions
+        state_store: dict[str, str] = {}
+
+        async def mock_set(
+            key: str, value: bytes | str, **_: object
+        ) -> bool:
+            if "state" in key:
+                state_store[key] = (
+                    value.decode() if isinstance(value, bytes) else value
+                )
+            return True
+
+        async def mock_get(key: str) -> bytes | None:
+            if "state" in key:
+                state_val = state_store.get(key)
+                return state_val.encode() if state_val else None
+            return None
+
+        mock_redis.set = mock_set
+        mock_redis.get.side_effect = mock_get
+
+        with patch.object(cache._discovery, "load_schema", new=slow_load):
+            cache.set_discovered_databases(["test_db"])
+            result = await cache.refresh("test_db")
+
+        # refresh() must not return until the load body has actually run.
+        assert load_started.is_set()
+        assert load_completed is True
+        assert "test_db" in result.succeeded

@@ -95,6 +95,7 @@ class SqlValidatorProtocol(Protocol):
         self,
         sql: str,
         schema: DatabaseSchema | None = None,
+        schema_names: list[str] | None = None,
     ) -> ValidationResult:
         """Validate the given SQL statement.
 
@@ -102,6 +103,8 @@ class SqlValidatorProtocol(Protocol):
             sql: The SQL string to validate.
             schema: Optional schema metadata for function whitelist and
                 foreign-table checks.
+            schema_names: Optional ordered ``search_path`` list used to
+                resolve unqualified tables the same way the executor will.
 
         Returns:
             A :class:`ValidationResult` indicating whether the SQL is safe.

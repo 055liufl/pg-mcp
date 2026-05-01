@@ -184,6 +184,131 @@ class TestDenyList:
         assert validator._is_denied("any_db") is False
 
 
+class TestHierarchicalDenyList:
+    """Tests for hierarchical ``db.schema.table.column`` deny rules."""
+
+    def _schema_with_secrets(self, database: str = "prod_db") -> DatabaseSchema:
+        return DatabaseSchema(
+            database=database,
+            tables=[
+                TableInfo(
+                    schema_name="public",
+                    table_name="users",
+                    columns=[
+                        ColumnInfo(name="id", type="integer", nullable=False),
+                        ColumnInfo(name="email", type="text", nullable=False),
+                    ],
+                ),
+            ],
+        )
+
+    def test_table_level_rule_downgrades_to_metadata_only(self) -> None:
+        settings = _make_settings(
+            validation_deny_list="prod_db.public.users",
+            validation_data_policy=ValidationDataPolicy.FULL,
+        )
+        validator = ResultValidator(AsyncMock(), settings)
+        result = ExecutionResult(
+            columns=["id", "email"],
+            column_types=["integer", "text"],
+            rows=[[1, "alice@example.com"]],
+            row_count=1,
+        )
+        schema = self._schema_with_secrets()
+
+        prompt = validator._build_prompt(
+            "list users", "SELECT id, email FROM public.users", result, schema
+        )
+
+        # Table-level rule must drop sample rows entirely.
+        assert "Sample rows" not in prompt
+        assert "alice@example.com" not in prompt
+
+    def test_table_level_rule_does_not_apply_to_other_tables(self) -> None:
+        settings = _make_settings(
+            validation_deny_list="prod_db.public.orders",
+            validation_data_policy=ValidationDataPolicy.FULL,
+        )
+        validator = ResultValidator(AsyncMock(), settings)
+        result = ExecutionResult(
+            columns=["id", "email"],
+            column_types=["integer", "text"],
+            rows=[[1, "alice@example.com"]],
+            row_count=1,
+        )
+        schema = self._schema_with_secrets()
+
+        prompt = validator._build_prompt(
+            "list users",
+            "SELECT id, email FROM public.users",
+            result,
+            schema,
+        )
+
+        # Rule targets ``orders`` — ``users`` query should still ship rows.
+        assert "Sample rows" in prompt
+        assert "alice@example.com" in prompt
+
+    def test_column_level_rule_masks_specific_column(self) -> None:
+        settings = _make_settings(
+            validation_deny_list="prod_db.public.users.email",
+            validation_data_policy=ValidationDataPolicy.FULL,
+        )
+        validator = ResultValidator(AsyncMock(), settings)
+        result = ExecutionResult(
+            columns=["id", "email"],
+            column_types=["integer", "text"],
+            rows=[[1, "alice@example.com"]],
+            row_count=1,
+        )
+        schema = self._schema_with_secrets()
+
+        prompt = validator._build_prompt(
+            "list users",
+            "SELECT id, email FROM public.users",
+            result,
+            schema,
+        )
+
+        # Column-level rule masks the email but keeps id and overall layout.
+        assert "Sample rows" in prompt
+        assert "alice@example.com" not in prompt
+        assert "***" in prompt
+        # The non-denied column should still appear.
+        assert '"id": 1' in prompt or "[1," in prompt or "[[1," in prompt
+
+    def test_wildcard_db_segment_applies_to_any_database(self) -> None:
+        settings = _make_settings(
+            validation_deny_list="*.public.users",
+            validation_data_policy=ValidationDataPolicy.FULL,
+        )
+        validator = ResultValidator(AsyncMock(), settings)
+        result = ExecutionResult(
+            columns=["id"],
+            column_types=["integer"],
+            rows=[[1]],
+            row_count=1,
+        )
+        schema = DatabaseSchema(
+            database="any_db",
+            tables=[
+                TableInfo(
+                    schema_name="public",
+                    table_name="users",
+                    columns=[
+                        ColumnInfo(name="id", type="integer", nullable=False),
+                    ],
+                ),
+            ],
+        )
+
+        prompt = validator._build_prompt(
+            "show users", "SELECT id FROM users", result, schema
+        )
+
+        assert "Sample rows" not in prompt
+
+
 class TestPolicyHandling:
     """Tests for data policy in prompt building."""
 

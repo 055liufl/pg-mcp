@@ -160,6 +160,51 @@ class TestForeignTables:
 
         assert result.valid is True
 
+    def test_unqualified_foreign_in_non_public_schema_denied(
+        self,
+        validator: SqlValidator,
+    ) -> None:
+        # Regression for schema-resolution mismatch: an unqualified
+        # ``orders`` should canonicalize to whichever schema is first in
+        # the search_path that defines it. Here that schema is ``app``,
+        # which has a foreign table — so the validator must reject.
+        schema = DatabaseSchema(
+            database="test_db",
+            tables=[
+                TableInfo(
+                    schema_name="app",
+                    table_name="orders",
+                    columns=[
+                        ColumnInfo(name="id", type="integer", nullable=False)
+                    ],
+                    is_foreign=True,
+                ),
+            ],
+        )
+
+        result = validator.validate(
+            "SELECT * FROM orders",
+            schema,
+            schema_names=["app", "public"],
+        )
+
+        assert result.valid is False
+        assert "Foreign table access denied" in (result.reason or "")
+
+    def test_unqualified_table_uses_default_schema_when_no_search_path(
+        self,
+        validator: SqlValidator,
+        schema_with_foreign_table: DatabaseSchema,
+    ) -> None:
+        # Without an explicit search_path, the validator falls back to
+        # ``public`` and rejects when the table is foreign there.
+        result = validator.validate(
+            "SELECT * FROM foreign_data", schema_with_foreign_table
+        )
+
+        assert result.valid is False
+        assert "Foreign table access denied" in (result.reason or "")
+
 
 class TestFunctionWhitelist:
     """Tests for schema-driven function whitelist."""
