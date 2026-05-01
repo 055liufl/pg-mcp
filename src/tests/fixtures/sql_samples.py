@@ -127,6 +127,20 @@ FAIL_CASES: list[tuple[str, str, str]] = [
         WITH cte AS (INSERT INTO logs VALUES (1) RETURNING id)
         SELECT * FROM cte
     """, "E_SQL_UNSAFE"),
+    ("cte_with_update", """
+        WITH cte AS (UPDATE users SET active = false RETURNING id)
+        SELECT * FROM cte
+    """, "E_SQL_UNSAFE"),
+    ("cte_with_delete", """
+        WITH cte AS (DELETE FROM users WHERE id = 1 RETURNING id)
+        SELECT * FROM cte
+    """, "E_SQL_UNSAFE"),
+    # Multi-statement masquerading as comment-stripped
+    ("multi_select_pgsleep", "SELECT 1; SELECT pg_sleep(0)", "E_SQL_UNSAFE"),
+    ("multi_select_then_truncate", "SELECT * FROM users; TRUNCATE TABLE audit_log", "E_SQL_UNSAFE"),
+    # Additional advisory-lock variants
+    ("func_pg_advisory_xact_lock", "SELECT pg_advisory_xact_lock(1)", "E_SQL_UNSAFE"),
+    ("func_pg_advisory_unlock", "SELECT pg_advisory_unlock(1)", "E_SQL_UNSAFE"),
 
     # Nested DDL inside subquery (if parser catches it)
     ("select_with_drop", "SELECT * FROM (DROP TABLE users) t", "E_SQL_PARSE"),
