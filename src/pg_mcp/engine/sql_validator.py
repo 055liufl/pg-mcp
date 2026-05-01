@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import sqlglot
 from sqlglot import exp
 
@@ -288,15 +290,21 @@ class SqlValidator:
     def _extract_func_name(self, node: exp.Func | exp.Anonymous) -> str:
         """Extract the function name from an AST function node.
 
-        Handles both built-in SQLGlot Func subclasses and Anonymous nodes
-        (e.g. dblink(...)).
+        Handles both ``Anonymous`` nodes (e.g. ``dblink(...)``) and built-in
+        SQLGlot ``Func`` subclasses. For built-in subclasses, render the
+        node in postgres dialect and take the leading identifier — this
+        matches the function name PostgreSQL actually sees, which can
+        differ from ``node.sql_name()`` (SQLGlot's internal canonical
+        name; e.g. ``date_trunc`` parses as ``TimestampTrunc`` whose
+        ``sql_name()`` is ``"TIMESTAMP_TRUNC"`` even though the rendered
+        SQL is ``DATE_TRUNC``).
         """
         if isinstance(node, exp.Anonymous):
             if isinstance(node.this, str):
                 return node.this
             return ""
-        return (
-            node.sql_name()
-            if hasattr(node, "sql_name")
-            else type(node).__name__
-        )
+        rendered = node.sql(dialect="postgres")
+        match = re.match(r"\s*([A-Za-z_][A-Za-z_0-9]*)", rendered)
+        if match:
+            return match.group(1)
+        return type(node).__name__

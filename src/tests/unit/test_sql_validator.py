@@ -303,6 +303,31 @@ class TestFunctionWhitelist:
         )
 
         assert result.valid is True
+
+    def test_date_trunc_recognized_under_sqlglot_internal_alias(
+        self,
+        validator: SqlValidator,
+        sample_schema: DatabaseSchema,
+    ) -> None:
+        # Regression: SQLGlot parses postgres `date_trunc(...)` as the
+        # internal `TimestampTrunc` node whose ``sql_name()`` is
+        # ``"TIMESTAMP_TRUNC"``. The validator must consult the rendered
+        # function name (``date_trunc``) when checking the allowlist,
+        # otherwise valid PG SQL is rejected as
+        # "Function not in allowlist: timestamp_trunc".
+        # Add ``date_trunc`` to the schema's allowlist for this test.
+        schema_with_date_trunc = sample_schema.model_copy(
+            update={
+                "allowed_functions": sample_schema.allowed_functions
+                | {"date_trunc"}
+            }
+        )
+        result = validator.validate(
+            "SELECT date_trunc('month', created_at) FROM users",
+            schema_with_date_trunc,
+        )
+
+        assert result.valid is True
     def test_unknown_function_rejected_when_whitelist_set(
         self, validator: SqlValidator, sample_schema: DatabaseSchema
     ) -> None:
