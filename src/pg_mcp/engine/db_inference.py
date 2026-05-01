@@ -38,6 +38,68 @@ _STOP_WORDS: frozenset[str] = frozenset({
 })
 
 
+# Chinese (CJK) → English synonym map. Used to enrich keyword extraction so
+# Chinese natural-language queries can match English schema entity names.
+# Substring matching is used because the regex tokenizer treats consecutive
+# CJK characters as a single token (e.g. "博客文章" stays one token).
+_ZH_SYNONYMS: dict[str, tuple[str, ...]] = {
+    # Blog / content
+    "博客": ("blog", "post", "article"),
+    "文章": ("post", "article"),
+    "草稿": ("draft",),
+    "已发布": ("published",),
+    "评论": ("comment",),
+    "标签": ("tag",),
+    "作者": ("author", "user"),
+    "审计": ("audit", "log"),
+    "日志": ("log",),
+    # E-commerce / sales
+    "用户": ("user", "customer", "account"),
+    "客户": ("customer", "client"),
+    "订单": ("order",),
+    "销售": ("sale", "sales", "revenue"),
+    "营收": ("revenue", "sales"),
+    "收入": ("revenue", "income"),
+    "商品": ("product", "item"),
+    "产品": ("product", "item"),
+    "品牌": ("brand",),
+    "品类": ("category",),
+    "类目": ("category",),
+    "库存": ("inventory", "stock"),
+    "支付": ("payment",),
+    "退款": ("refund",),
+    "退货": ("return",),
+    "优惠券": ("coupon",),
+    "购物车": ("cart",),
+    "地址": ("address", "shipping"),
+    "邮箱": ("email",),
+    "手机": ("phone", "mobile"),
+    # Analytics / DW
+    "渠道": ("channel",),
+    "广告": ("ad", "advertisement", "campaign"),
+    "投放": ("campaign", "ad"),
+    "活动": ("campaign",),
+    "邮件": ("email", "send"),
+    "订阅": ("subscription",),
+    "会话": ("session",),
+    "事件": ("event",),
+    "维度": ("dim", "dimension"),
+    "事实": ("fact",),
+    "国家": ("country", "region"),
+    "地区": ("region", "country"),
+    "门店": ("store",),
+    "仓库": ("warehouse",),
+    "活跃": ("active",),
+    "留存": ("retention", "cohort"),
+    "漏斗": ("funnel",),
+    "转化": ("conversion",),
+    "归因": ("attribution",),
+    "终生价值": ("ltv", "lifetime"),
+    "终生消费": ("lifetime",),
+    "工单": ("ticket", "support"),
+    "客服": ("support",),
+}
+
 
 _ScoreEntry = tuple[str, float]
 
@@ -186,8 +248,12 @@ class DbInference:
     def _extract_keywords(self, user_query: str) -> list[str]:
         """Extract searchable keywords from a natural language query.
 
-        Simple tokenization: split on whitespace/punctuation, filter stop words,
-        keep tokens with length >= 2 and alphanumeric content.
+        Tokenization:
+        - Splits on non-word characters (whitespace, punctuation).
+        - Filters stop words and short tokens.
+        - For CJK tokens, scans ``_ZH_SYNONYMS`` and appends English synonyms
+          as substring matches so Chinese phrases can match English schema
+          entity names.
         """
         import re
 
@@ -199,6 +265,11 @@ class DbInference:
             token = token.strip("-_")
             if len(token) >= 2 and token not in _STOP_WORDS:
                 keywords.append(token)
+                # Expand CJK substrings via synonym map.
+                if any("\u4e00" <= c <= "\u9fff" for c in token):
+                    for zh_key, en_words in _ZH_SYNONYMS.items():
+                        if zh_key in token:
+                            keywords.extend(en_words)
         return keywords
 
     def _score(self, summary: DbSummary, keywords: list[str]) -> float:

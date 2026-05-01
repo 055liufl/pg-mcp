@@ -362,6 +362,36 @@ class TestKeywordExtraction:
         assert "users" in keywords
         assert "orders" in keywords
 
+    def test_extract_keywords_expands_chinese_synonyms(
+        self, settings: Settings
+    ) -> None:
+        # Chinese tokens are not split by the regex tokenizer; the synonym
+        # map enriches them with English equivalents that can match the
+        # English schema entity names actually present in pg-mcp fixtures.
+        cache = MockSchemaCache(["db"])
+        inference = DbInference(cache, settings)
+
+        keywords = inference._extract_keywords("查询所有已发布的博客文章")
+
+        # Should expand 博客 / 文章 / 已发布 into English synonyms.
+        assert "blog" in keywords
+        assert "post" in keywords
+        assert "article" in keywords
+        assert "published" in keywords
+
+    def test_extract_keywords_chinese_partial_match_in_long_token(
+        self, settings: Settings
+    ) -> None:
+        # Even when many Chinese characters fuse into a single token,
+        # substring matches in the synonym map should still trigger.
+        cache = MockSchemaCache(["db"])
+        inference = DbInference(cache, settings)
+
+        keywords = inference._extract_keywords("近30天每个品牌的总销售额")
+
+        assert "brand" in keywords
+        assert "sale" in keywords or "sales" in keywords
+        assert "revenue" in keywords
 
 class TestSummaryBuilding:
     """Tests for DbSummary construction."""
