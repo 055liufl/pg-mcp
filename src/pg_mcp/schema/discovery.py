@@ -247,6 +247,11 @@ class SchemaDiscovery:
     async def _fetch_composite_types(
         self, conn: asyncpg.Connection
     ) -> list[asyncpg.Record]:
+        # Standalone composite types created by ``CREATE TYPE x AS (...)``.
+        # Filter on ``c.relkind = 'c'`` to exclude row types of tables/views
+        # (which also have ``typtype = 'c'`` but are not user-defined
+        # standalone composites). Attributes hang off ``t.typrelid``, not
+        # ``t.oid`` — joining on the latter never matches.
         return await conn.fetch(
             """
             SELECT
@@ -257,8 +262,10 @@ class SchemaDiscovery:
                 a.attnotnull AS attr_notnull
             FROM pg_type t
             JOIN pg_namespace n ON t.typnamespace = n.oid
-            JOIN pg_attribute a ON t.oid = a.attrelid
+            JOIN pg_class     c ON c.oid = t.typrelid
+            JOIN pg_attribute a ON a.attrelid = t.typrelid
             WHERE t.typtype = 'c'
+              AND c.relkind = 'c'
               AND a.attnum > 0
               AND NOT a.attisdropped
               AND n.nspname NOT IN (
