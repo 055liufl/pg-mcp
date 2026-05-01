@@ -216,6 +216,93 @@ class TestFunctionWhitelist:
 
         assert result.valid is True
 
+    def test_case_expression_passes_without_allowlist_entry(
+        self, validator: SqlValidator, sample_schema: DatabaseSchema
+    ) -> None:
+        # CASE WHEN ... END is a SQL keyword expression, not a function;
+        # it must not be checked against the function allowlist even though
+        # SQLGlot models it as an exp.Func subclass.
+        result = validator.validate(
+            "SELECT CASE WHEN id > 0 THEN 'pos' ELSE 'zero' END FROM users",
+            sample_schema,
+        )
+
+        assert result.valid is True
+
+    def test_cast_expression_passes_without_allowlist_entry(
+        self, validator: SqlValidator, sample_schema: DatabaseSchema
+    ) -> None:
+        # CAST(...) and ::type are type-cast expressions, not callable
+        # functions. They subclass exp.Func in SQLGlot but are absent from
+        # pg_proc-derived allowlists.
+        result_cast = validator.validate(
+            "SELECT CAST(id AS TEXT) FROM users", sample_schema
+        )
+        result_colon = validator.validate(
+            "SELECT id::text FROM users", sample_schema
+        )
+
+        assert result_cast.valid is True
+        assert result_colon.valid is True
+
+    def test_if_expression_passes_without_allowlist_entry(
+        self, validator: SqlValidator, sample_schema: DatabaseSchema
+    ) -> None:
+        # IF(cond, a, b) maps to exp.If — same keyword-expression treatment.
+        result = validator.validate(
+            "SELECT IF(id > 0, 'pos', 'zero') FROM users", sample_schema
+        )
+
+        assert result.valid is True
+
+    def test_boolean_operators_pass_without_allowlist_entry(
+        self, validator: SqlValidator, sample_schema: DatabaseSchema
+    ) -> None:
+        # AND/OR/XOR are boolean operators, not callable functions, even
+        # though SQLGlot models them as exp.Func subclasses.
+        result = validator.validate(
+            "SELECT * FROM users WHERE id > 0 AND name IS NOT NULL OR id = 1",
+            sample_schema,
+        )
+
+        assert result.valid is True
+
+    def test_exists_subquery_passes_without_allowlist_entry(
+        self, validator: SqlValidator, sample_schema: DatabaseSchema
+    ) -> None:
+        # EXISTS(...) is a SQL keyword expression that subclasses exp.Func.
+        result = validator.validate(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE id = 1) AS has_user",
+            sample_schema,
+        )
+
+        assert result.valid is True
+
+    def test_current_date_keyword_passes_without_allowlist_entry(
+        self, validator: SqlValidator, sample_schema: DatabaseSchema
+    ) -> None:
+        # CURRENT_DATE / CURRENT_TIMESTAMP are SQL keywords (no parens),
+        # not pg_proc functions.
+        result = validator.validate(
+            "SELECT CURRENT_DATE, CURRENT_TIMESTAMP FROM users",
+            sample_schema,
+        )
+
+        assert result.valid is True
+
+    def test_sql_standard_keyword_funcs_pass_without_allowlist_entry(
+        self, validator: SqlValidator, sample_schema: DatabaseSchema
+    ) -> None:
+        # COALESCE / NULLIF / GREATEST / LEAST are SQL keyword operators in
+        # PostgreSQL (not present in pg_proc) but are commonly emitted by
+        # LLMs and must pass the validator.
+        result = validator.validate(
+            "SELECT COALESCE(name, 'N/A'), NULLIF(id, 0), "
+            "GREATEST(id, 1), LEAST(id, 100) FROM users",
+            sample_schema,
+        )
+
+        assert result.valid is True
     def test_unknown_function_rejected_when_whitelist_set(
         self, validator: SqlValidator, sample_schema: DatabaseSchema
     ) -> None:

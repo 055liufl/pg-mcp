@@ -64,6 +64,33 @@ _ALLOWED_STATEMENT_TYPES: tuple[type[exp.Expression], ...] = (
     exp.Subquery,
 )
 
+# exp.Func subclasses that are SQL keyword expressions (control flow, type
+# casting, boolean operators, etc.), not callable functions. pg_proc-derived
+# allowlists never contain these, so they would otherwise be incorrectly
+# rejected as unknown functions.
+_NON_FUNCTION_EXPRESSIONS: tuple[type[exp.Func], ...] = (
+    # Control flow / type casting
+    exp.Case,
+    exp.Cast,  # also covers TryCast / JSONCast subclasses
+    exp.If,
+    # Boolean operators
+    exp.And,
+    exp.Or,
+    exp.Xor,
+    # Subquery / time-of-execution keywords
+    exp.Exists,
+    exp.CurrentDate,
+    exp.CurrentTime,
+    exp.CurrentTimestamp,
+    exp.CurrentUser,
+    # SQL standard operators with function-like syntax that PostgreSQL parses
+    # specially (not stored in pg_proc). Pure computations, no side effects.
+    exp.Coalesce,
+    exp.Nullif,
+    exp.Greatest,
+    exp.Least,
+)
+
 
 def _canonicalize_table_id(
     table: exp.Table,
@@ -171,6 +198,11 @@ class SqlValidator:
         # 5. Function call checks: blacklist + whitelist
         allowed_funcs = schema.allowed_functions if schema else None
         for func in ast.find_all(exp.Func, exp.Anonymous):
+            # Skip SQL keyword expressions (control flow, type casts,
+            # boolean operators, SQL-standard operators). They subclass
+            # exp.Func but are never callable functions in pg_proc.
+            if isinstance(func, _NON_FUNCTION_EXPRESSIONS):
+                continue
             func_name = self._extract_func_name(func).lower()
             if not func_name:
                 continue
