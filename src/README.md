@@ -2,63 +2,157 @@
 
 PostgreSQL Natural Language Query MCP Server — 通过自然语言查询 PostgreSQL 数据库的 MCP (Model Context Protocol) 服务。
 
+> **MCP** 是 Anthropic 推出的开放协议，让 AI 助手（Claude、Cursor 等）能够安全地调用外部工具。pg-mcp 让 AI 直接用自然语言查询你的 PostgreSQL 数据库。
+
 ## 功能特性
 
 - **自然语言转 SQL**: 使用 OpenAI GPT 模型将自然语言查询转换为 PostgreSQL SQL
 - **Schema 自动发现与缓存**: 自动发现数据库结构，缓存于 Redis，支持懒加载和后台预热
 - **SQL 安全校验**: 基于 SQLGlot AST 的白名单/黑名单双重校验，确保只读安全
 - **数据库自动推断**: 根据查询内容自动推断目标数据库，支持歧义检测
-- **双传输模式**: 支持 stdio（Claude Desktop 等）和 SSE（HTTP）两种 MCP 传输
+- **双传输模式**: 支持 stdio（Claude Code / Cursor）和 SSE（HTTP）两种 MCP 传输
 - **AI 结果验证**（可选）: 对复杂查询结果进行 AI 辅助验证
 
-## 快速开始
+---
 
-### 安装
+## 目录
+
+- [安装](#安装)
+- [环境变量配置](#环境变量配置)
+- [注册到 Claude Code](#注册到-claude-code)
+- [注册到 Cursor](#注册到-cursor)
+- [使用示例](#使用示例)
+- [运行模式](#运行模式)
+- [日志格式](#日志格式)
+- [安全说明](#安全说明)
+- [常见问题排查](#常见问题排查)
+- [项目结构](#项目结构)
+- [测试](#测试)
+- [Docker 部署](#docker-部署)
+
+---
+
+## 安装
+
+### 方式一：全局安装（推荐用于 Claude / Cursor）
+
+```bash
+cd /path/to/pg-mcp/src
+uv tool install .
+```
+
+安装后 `pg-mcp` 命令全局可用，AI 客户端可直接调用。
+
+更新代码后重装：
+```bash
+cd /path/to/pg-mcp/src
+uv tool install --force .
+```
+
+### 方式二：开发模式安装
 
 ```bash
 # 使用 uv（推荐）
-uv sync
+cd /path/to/pg-mcp/src
+uv sync --extra dev
 
 # 或使用 pip
 pip install -e ".[dev]"
 ```
 
-### 配置
+---
 
-复制示例环境文件并编辑：
+## 环境变量配置
 
-```bash
-cp .env.example .env
-# 编辑 .env，填写 PostgreSQL 和 OpenAI 配置
-```
+pg-mcp 所有配置通过环境变量或 `.env` 文件读取。在 AI 客户端（Claude / Cursor）中，通常在 MCP 配置文件里通过 `env` 字段传入。
 
-必需的环境变量：
+### 必需配置
 
-| 变量 | 说明 |
-|------|------|
-| `PG_USER` | PostgreSQL 用户名（建议只读用户） |
-| `PG_PASSWORD` | PostgreSQL 密码 |
-| `OPENAI_API_KEY` | OpenAI API Key |
-| `REDIS_URL` | Redis 连接地址 |
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PG_USER` | — | PostgreSQL 用户名（**强烈建议只读用户**） |
+| `PG_PASSWORD` | — | PostgreSQL 密码 |
+| `OPENAI_API_KEY` | — | OpenAI API Key |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis 连接地址 |
 
-### 运行
+### PostgreSQL 连接
 
-**stdio 模式**（Claude Desktop 等客户端）：
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PG_HOST` | `localhost` | PostgreSQL 主机 |
+| `PG_PORT` | `5432` | PostgreSQL 端口 |
+| `PG_DATABASES` | `''` | 要服务的数据库列表（逗号分隔，空则自动发现） |
+| `PG_EXCLUDE_DATABASES` | `template0,template1,postgres` | 排除的数据库 |
+| `PG_SSLMODE` | `prefer` | SSL 模式：`disable`/`allow`/`prefer`/`require`/`verify-ca`/`verify-full` |
+| `PG_SSLROOTCERT` | `''` | SSL CA 证书路径 |
+| `DB_POOL_SIZE` | `5` | 连接池大小 |
+| `STRICT_READONLY` | `false` | `true` 时检测到写权限拒绝启动 |
 
-```bash
-pg-mcp --transport stdio
-```
+### OpenAI
 
-**SSE 模式**（HTTP 服务）：
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `OPENAI_API_KEY` | — | OpenAI API Key |
+| `OPENAI_MODEL` | `gpt-5-mini` | 模型名称 |
+| `OPENAI_BASE_URL` | `''` | 自定义 API 地址（兼容第三方转发） |
+| `OPENAI_TIMEOUT` | `60` | API 请求超时（秒） |
 
-```bash
-pg-mcp --transport sse
-# 默认监听 http://0.0.0.0:8000
-```
+### 查询限制
 
-### Claude Desktop 配置
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `QUERY_TIMEOUT` | `30` | SQL 执行超时（秒） |
+| `IDLE_IN_TRANSACTION_SESSION_TIMEOUT` | `60` | 事务空闲超时（秒） |
+| `MAX_ROWS` | `1000` | 单查询最大返回行数 |
+| `MAX_CELL_BYTES` | `4096` | 单个单元格最大字节数 |
+| `MAX_RESULT_BYTES` | `10485760` (10MB) | 结果集软限制 |
+| `MAX_RESULT_BYTES_HARD` | `52428800` (50MB) | 结果集硬限制 |
+| `SESSION_WORK_MEM` | `64MB` | 会话 work_mem |
+| `SESSION_TEMP_FILE_LIMIT` | `256MB` | 临时文件上限 |
+| `MAX_CONCURRENT_REQUESTS` | `20` | 最大并发请求数 |
 
-在 `claude_desktop_config.json` 中添加：
+### Schema 缓存
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `SCHEMA_REFRESH_INTERVAL` | `600` | Schema 自动刷新间隔（秒），`0` 关闭 |
+| `SCHEMA_MAX_TABLES_FOR_FULL_CONTEXT` | `50` | 表数超过此值时切换为检索模式（减少 Token 消耗） |
+| `MAX_RETRIES` | `2` | SQL 生成失败重试次数 |
+
+### AI 结果验证（默认关闭）
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_VALIDATION` | `false` | 是否启用 AI 结果验证 |
+| `VALIDATION_SAMPLE_ROWS` | `10` | 验证时采样行数 |
+| `VALIDATION_DATA_POLICY` | `metadata_only` | 数据策略：`metadata_only`/`masked`/`full` |
+| `VALIDATION_DENY_LIST` | `''` | 敏感字段规则（逗号分隔，格式 `db.schema.table.column`） |
+| `VALIDATION_CONFIDENCE_THRESHOLD` | `-1.0` | 置信度阈值 |
+
+### 日志与传输
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LOG_LEVEL` | `INFO` | 日志级别：`DEBUG`/`INFO`/`WARNING`/`ERROR` |
+| `LOG_FORMAT` | `json` | 日志格式：`json` 或 `console` |
+| `TRANSPORT` | `stdio` | 传输方式（CLI 参数 `--transport` 优先级更高） |
+| `SSE_HOST` | `0.0.0.0` | SSE 模式监听地址 |
+| `SSE_PORT` | `8000` | SSE 模式监听端口 |
+
+---
+
+## 注册到 Claude Code
+
+Claude Code（`claude` CLI）通过 `stdio` 模式与 MCP Server 通信。配置后，你可以在 Claude Code 的对话中直接通过自然语言查询数据库。
+
+### 1. 找到配置文件
+
+- **全局配置**（所有项目生效）: `~/.claude/settings.json`
+- **项目级配置**（仅当前项目）: `.claude/settings.local.json`
+
+### 2. 添加 pg-mcp 配置
+
+在 `settings.json` 或 `settings.local.json` 中添加：
 
 ```json
 {
@@ -68,36 +162,335 @@ pg-mcp --transport sse
       "args": ["--transport", "stdio"],
       "env": {
         "PG_HOST": "localhost",
+        "PG_PORT": "5432",
         "PG_USER": "readonly_user",
         "PG_PASSWORD": "your_password",
-        "OPENAI_API_KEY": "sk-your-key",
-        "REDIS_URL": "redis://localhost:6379/0"
+        "OPENAI_API_KEY": "sk-your-openai-key",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "LOG_FORMAT": "console"
       }
     }
   }
 }
 ```
 
-## 架构
+### 3. 在 Claude Code 中使用
+
+配置保存后，在 Claude Code 对话中直接提问即可：
 
 ```
-MCP Clients (Claude Desktop / Cursor / etc.)
-    │
-    ├─ stdio ─┐
-    └─ SSE  ──┼──► MCP Server ──► QueryEngine (Orchestrator)
-              │                      │
-              │    ┌──────────────┬──┴──┬──────────────┐
-              │    │              │     │              │
-              │ SQL Generator  SQL Validator  SQL Executor
-              │ (OpenAI)       (SQLGlot)     (asyncpg)
-              │    │              │     │              │
-              │    └──────────────┴──┬──┴──────────────┘
-              │                      │
-              │              Schema Cache (Redis)
-              │              Schema Discovery (asyncpg)
-              │
-              PostgreSQL          Redis
+帮我查询用户表中最近注册的 10 个用户
 ```
+
+Claude 会自动调用 pg-mcp 工具执行查询并返回结果。你也可以通过 `/mcp` 命令查看已注册的 MCP 服务器列表。
+
+### 配置要点
+
+- `command` 必须是 `pg-mcp` 的全路径或已加入 PATH 的命令名（推荐全局安装：`uv tool install .`）
+- `env` 中配置的环境变量会传递给 pg-mcp 进程
+- `LOG_FORMAT=console` 让日志更易读（调试时有用）
+- 数据库用户**强烈建议使用只读权限**，pg-mcp 会执行 SQL 安全校验，但最小权限原则更安全
+
+---
+
+## 注册到 Cursor
+
+Cursor 同样支持 MCP 协议，配置方式与 Claude Code 类似。
+
+### 方式一：项目级配置（推荐）
+
+在项目根目录创建 `.cursor/mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "pg-mcp": {
+      "command": "pg-mcp",
+      "args": ["--transport", "stdio"],
+      "env": {
+        "PG_HOST": "localhost",
+        "PG_PORT": "5432",
+        "PG_USER": "readonly_user",
+        "PG_PASSWORD": "your_password",
+        "OPENAI_API_KEY": "sk-your-openai-key",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "LOG_FORMAT": "console"
+      }
+    }
+  }
+}
+```
+
+### 方式二：全局配置
+
+Cursor 全局 MCP 配置路径：
+
+- **macOS**: `~/.cursor/mcp.json`
+- **Windows**: `%USERPROFILE%/.cursor/mcp.json`
+- **Linux**: `~/.cursor/mcp.json`
+
+配置内容与上面相同。
+
+### 方式三：Cursor 设置界面（v0.45+）
+
+1. 打开 Cursor Settings → MCP
+2. 点击 "Add New MCP Server"
+3. 填写：
+   - **Name**: `pg-mcp`
+   - **Type**: `command`
+   - **Command**: `PG_HOST=localhost PG_USER=readonly_user PG_PASSWORD=your_password OPENAI_API_KEY=sk-your-key REDIS_URL=redis://localhost:6379/0 LOG_FORMAT=console pg-mcp --transport stdio`
+
+> **注意**：Cursor 的设置界面目前可能不支持单独配置 `env`，需要将环境变量直接写在 Command 中。
+
+### 验证配置
+
+配置完成后，在 Cursor 的 Chat 面板中，你应该能看到 `pg-mcp` 工具可用。可以测试：
+
+```
+帮我查询用户表中最近注册的 10 个用户
+```
+
+---
+
+## 使用示例
+
+配置完成后，在 Claude 或 Cursor 中直接用自然语言提问即可，AI 会自动调用 pg-mcp 执行查询。
+
+### 示例 1：简单查询
+
+**你**: 查询所有用户表中有多少用户
+
+**AI** (调用 pg-mcp):
+```sql
+SELECT COUNT(*) FROM users;
+```
+**结果**: `1,234`
+
+### 示例 2：条件查询
+
+**你**: 找出过去 30 天内注册且邮箱域名是 gmail.com 的用户
+
+**AI** (调用 pg-mcp):
+```sql
+SELECT id, username, email, created_at
+FROM users
+WHERE created_at >= NOW() - INTERVAL '30 days'
+  AND email LIKE '%@gmail.com'
+ORDER BY created_at DESC;
+```
+
+### 示例 3：聚合分析
+
+**你**: 按月份统计订单数量和总金额
+
+**AI** (调用 pg-mcp):
+```sql
+SELECT
+  DATE_TRUNC('month', created_at) AS month,
+  COUNT(*) AS order_count,
+  SUM(total_amount) AS total_revenue
+FROM orders
+GROUP BY DATE_TRUNC('month', created_at)
+ORDER BY month DESC;
+```
+
+### 示例 4：跨表查询
+
+**你**: 显示每个用户的用户名、订单数量和总消费金额
+
+**AI** (调用 pg-mcp):
+```sql
+SELECT
+  u.username,
+  COUNT(o.id) AS order_count,
+  COALESCE(SUM(o.total_amount), 0) AS total_spent
+FROM users u
+LEFT JOIN orders o ON u.id = o.user_id
+GROUP BY u.id, u.username
+ORDER BY total_spent DESC;
+```
+
+### 示例 5：Schema 探索
+
+**你**: 数据库里有哪些表？每张表有哪些字段？
+
+**AI** (调用 pg-mcp):
+```
+数据库包含以下表：
+- users (id, username, email, password_hash, created_at, updated_at)
+- orders (id, user_id, status, total_amount, created_at, updated_at)
+- order_items (id, order_id, product_id, quantity, price)
+- products (id, name, description, price, stock, category_id)
+- categories (id, name, parent_id)
+```
+
+### 多数据库场景
+
+如果 PostgreSQL 中有多个数据库，pg-mcp 会自动推断你要查询的是哪个：
+
+**你**: analytics_dw 数据库中，上个月的销售额是多少？
+
+AI 会自动识别目标数据库为 `analytics_dw` 并执行查询。
+
+---
+
+## 运行模式
+
+### stdio 模式（Claude Code / Cursor）
+
+```bash
+pg-mcp --transport stdio
+```
+
+AI 客户端通过标准输入输出与 pg-mcp 通信。这是 Claude Code 和 Cursor 的默认模式。
+
+### SSE 模式（HTTP 服务）
+
+```bash
+pg-mcp --transport sse
+# 默认监听 http://0.0.0.0:8000
+```
+
+SSE 模式适合需要独立部署为 HTTP 服务的场景，其他 MCP 客户端可以通过 HTTP SSE 连接。
+
+自定义端口：
+```bash
+SSE_PORT=9000 pg-mcp --transport sse
+```
+
+---
+
+## 日志格式
+
+pg-mcp 支持两种日志输出格式：
+
+### JSON 格式（默认）
+
+```bash
+LOG_FORMAT=json pg-mcp --transport stdio
+```
+
+输出示例：
+```json
+{"event": "databases_discovered", "timestamp": "2026-05-01T12:34:56.789Z", "log_level": "info", "count": 3}
+```
+
+适合日志采集系统（如 ELK、Loki）解析。
+
+### Console 格式（人类可读）
+
+```bash
+LOG_FORMAT=console pg-mcp --transport stdio
+```
+
+输出示例：
+```
+2026-05-01T12:34:56.789Z [info     ] databases_discovered           count=3 databases=['mini_blog', 'shop_oms', 'analytics_dw']
+```
+
+适合本地开发调试，直接阅读。
+
+---
+
+## 安全说明
+
+### 三重 SQL 防护
+
+1. **AST 级安全校验**: 所有 SQL 通过 SQLGlot 解析为 AST，仅允许 `SELECT`/`UNION`/`EXPLAIN` 语句
+2. **函数黑名单**: 禁止危险函数（`pg_sleep`、`pg_read_file`、`dblink`、`lo_import` 等）
+3. **只读事务**: 执行时设置 `SET TRANSACTION READ ONLY` + `statement_timeout` + `work_mem` 限制
+
+### 权限建议
+
+```sql
+-- 创建只读用户示例
+CREATE USER pg_mcp_readonly WITH PASSWORD 'secure_password';
+
+-- 对目标数据库授予只读权限
+GRANT CONNECT ON DATABASE your_db TO pg_mcp_readonly;
+\c your_db
+GRANT USAGE ON SCHEMA public TO pg_mcp_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO pg_mcp_readonly;
+
+-- 对新表自动继承权限
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT ON TABLES TO pg_mcp_readonly;
+```
+
+### 其他安全措施
+
+- 敏感配置（密码、API Key）使用 `SecretStr` 自动脱敏
+- 日志中 SQL 字符串字面量替换为 `'***'`
+- 结果行永不写入日志
+- 支持 `STRICT_READONLY=true` 强制拒绝写权限用户启动
+
+---
+
+## 常见问题排查
+
+### pg-mcp 命令找不到
+
+```bash
+which pg-mcp
+# 如果无输出，确认 ~/.local/bin 在 PATH 中
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### Claude Code 无法识别工具
+
+1. 检查 `~/.claude/settings.json` 或 `.claude/settings.local.json` 的 JSON 语法是否正确
+2. 确认 `pg-mcp` 命令可通过终端直接执行：`which pg-mcp`
+3. 在 Claude Code 中运行 `/mcp` 查看已注册的 MCP 服务器列表
+4. 检查 Claude Code 日志：`~/.claude/logs/` 目录下的日志文件
+
+### 数据库连接失败
+
+```
+DbConnectError: 连接池创建失败（5 次重试）: [Errno 111] Connect call failed ('127.0.0.1', 5432)
+```
+
+- 确认 PostgreSQL 正在运行
+- 确认 `PG_HOST`/`PG_PORT` 配置正确（Docker 常用 5433）
+- 确认用户名密码正确
+- 检查防火墙/网络连通性：
+  ```bash
+  pg_isready -h $PG_HOST -p $PG_PORT -U $PG_USER
+  ```
+
+### Redis 连接失败
+
+```
+ConnectionError: Error 111 connecting to localhost:6379
+```
+
+- 启动 Redis：`redis-server --daemonize yes`
+- 或使用 Docker：`docker run -d -p 6379:6379 redis:7-alpine`
+- 修改 `REDIS_URL` 指向正确的 Redis 实例
+
+### OpenAI API 错误
+
+- 确认 `OPENAI_API_KEY` 有效且未过期
+- 检查 `OPENAI_BASE_URL` 是否正确（使用第三方转发时）
+- 检查网络是否能访问 OpenAI API
+
+### 权限警告
+
+```
+[warning] readonly_check_failed: 数据库用户拥有管理权限
+```
+
+这是警告而非错误。建议创建只读用户消除此警告。若确实需要，可忽略。
+
+### 端口 8000 被占用（SSE 模式）
+
+```bash
+# 查找占用进程
+lsof -i :8000
+# 或更换端口
+SSE_PORT=9000 pg-mcp --transport sse
+```
+
+---
 
 ## 项目结构
 
@@ -107,12 +500,6 @@ pg_mcp/
 ├── config.py           # pydantic-settings 配置
 ├── server.py           # MCP Server + Tool 注册
 ├── app.py              # FastAPI app (SSE 模式)
-├── protocols.py        # Protocol 接口定义
-├── models/             # Pydantic 数据模型
-│   ├── schema.py       # DatabaseSchema / TableInfo / ColumnInfo
-│   ├── request.py      # QueryRequest
-│   ├── response.py     # QueryResponse
-│   └── errors.py       # ErrorCode + 异常层级
 ├── engine/             # 核心引擎
 │   ├── orchestrator.py     # QueryEngine 主编排器
 │   ├── db_inference.py     # 数据库自动推断
@@ -127,66 +514,81 @@ pg_mcp/
 │   └── state.py        # Schema 状态机
 ├── db/
 │   └── pool.py         # asyncpg 连接池管理
+├── models/             # Pydantic 数据模型
+│   ├── schema.py       # DatabaseSchema / TableInfo / ColumnInfo
+│   ├── request.py      # QueryRequest
+│   ├── response.py     # QueryResponse
+│   └── errors.py       # ErrorCode + 异常层级
 └── observability/
-    ├── logging.py       # structlog JSON 日志
-    ├── metrics.py       # 计时器
-    └── sanitizer.py     # 日志脱敏
+    ├── logging.py       # structlog 日志（JSON / Console）
+    ├── metrics.py       # 计时器 / token 计数
+    └── sanitizer.py     # 日志脱敏 / PII 掩码
 ```
+
+---
 
 ## 测试
 
 ```bash
+cd /path/to/pg-mcp/src
+
 # 单元测试（无外部依赖）
-make test-unit
-# 或: uv run pytest tests/unit/ -v
+uv run pytest tests/unit/ -W ignore
 
 # 集成测试（需 PostgreSQL + Redis）
-make test-integration
-# 或: uv run pytest tests/integration/ -v
+uv run pytest tests/integration/ -W ignore
 
 # 端到端测试
-make test-e2e
+uv run pytest tests/e2e/ -W ignore
 
 # 全量测试
-make test-all
+uv run pytest tests/ -W ignore
 
 # 覆盖率
-make coverage
+uv run pytest --cov=pg_mcp --cov-report=term-missing
+
+# 代码质量
+uv run ruff check .       # lint
+uv run ruff format .      # format
+uv run mypy pg_mcp/       # 类型检查
 ```
 
-## 代码质量
+### 测试数据库（fixtures）
 
 ```bash
-make quality    # lint + typecheck + test-unit
-make lint       # ruff check
-make format     # ruff format
-make typecheck  # mypy
+cd /path/to/pg-mcp/fixtures
+
+# 启动 Docker PostgreSQL
+make docker-up
+
+# 构建测试数据
+make all PG_PORT=5433 PG_USER=test PGPASSWORD=test
+
+# 验证
+make verify PG_PORT=5433 PG_USER=test PGPASSWORD=test
+
+# 清理
+make clean PG_PORT=5433 PG_USER=test PGPASSWORD=test
+make docker-down
 ```
+
+---
 
 ## Docker 部署
 
 ```bash
 # 构建镜像
-make docker-build
-# 或: docker build -t pg-mcp:latest .
+docker build -t pg-mcp:latest .
 
-# 运行容器
-make docker-run
-# 或: docker run --rm -it --env-file .env -p 8000:8000 pg-mcp:latest
+# 运行容器（SSE 模式）
+docker run --rm -it \
+  --env-file .env \
+  -p 8000:8000 \
+  pg-mcp:latest \
+  pg-mcp --transport sse
 ```
 
-## 安全说明
-
-- **只读用户**: 强烈建议使用 PostgreSQL 只读用户运行
-- `STRICT_READONLY=true`: 检测到写权限时拒绝启动
-- SQL 执行使用 `SET TRANSACTION READ ONLY` + `statement_timeout`
-- 所有 SQL 通过 AST 级安全校验（语句白名单 + 函数黑名单）
-- 敏感配置使用 `SecretStr` 自动脱敏
-- 日志中 SQL 字符串字面量替换为 `'***'`
-
-## 配置参考
-
-详见 `.env.example` 了解所有可用配置项。
+---
 
 ## License
 
