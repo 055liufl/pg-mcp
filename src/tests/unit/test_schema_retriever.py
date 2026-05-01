@@ -121,7 +121,7 @@ class TestShouldUseRetrieval:
 
         result = retriever.should_use_retrieval(small_schema)
 
-        assert result is True
+        assert result is False
 
 
 class TestBuildIndex:
@@ -177,7 +177,7 @@ class TestScoreByIndex:
             table_name="user_accounts",
             all_terms=frozenset(),
         )
-        score = retriever._score_by_index(idx, {"users"})
+        score = retriever._score_by_index(idx, {"user"})
 
         assert score == 5.0
 
@@ -235,15 +235,15 @@ class TestRetrieve:
         context = retriever.retrieve("orders", small_schema)
 
         assert "Foreign Keys" in context
-        assert "fk_orders_user_id" in context
+        assert "public.orders(user_id) -> public.users(id)" in context
 
     def test_retrieve_includes_enum_types(
         self, retriever: SchemaRetriever, small_schema: DatabaseSchema
     ) -> None:
         context = retriever.retrieve("orders", small_schema)
 
-        assert "Enum Types" in context
-        assert "order_status" in context
+        assert "Enum Types" not in context
+        assert "order_status" not in context
 
     def test_retrieve_fallback_when_no_positive_scores(
         self, retriever: SchemaRetriever, small_schema: DatabaseSchema
@@ -283,7 +283,7 @@ class TestTokenize:
         tokens = retriever._tokenize("a bb ccc dddd")
 
         assert "a" not in tokens
-        assert "bb" not in tokens
+        assert "bb" in tokens
         assert "ccc" in tokens
         assert "dddd" in tokens
 

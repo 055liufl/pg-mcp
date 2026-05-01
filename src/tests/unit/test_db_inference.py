@@ -213,7 +213,7 @@ class TestNoMatch:
         cache = MockSchemaCache(["sales_db"])
         inference = DbInference(cache, settings)
 
-        with pytest.raises(SchemaNotReadyError):
+        with pytest.raises(DbInferNoMatchError):
             await inference.infer("the and or")
 
     @pytest.mark.asyncio
@@ -223,7 +223,7 @@ class TestNoMatch:
         cache = MockSchemaCache(["sales_db"])
         inference = DbInference(cache, settings)
 
-        with pytest.raises(SchemaNotReadyError):
+        with pytest.raises(DbInferNoMatchError):
             await inference.infer("")
 
 

@@ -66,15 +66,16 @@ def _make_mock_pool(records: Optional[list[dict]] = None) -> MagicMock:
             mock_rows.append(mock_row)
 
     mock_conn.fetch = AsyncMock(return_value=mock_rows)
-    mock_conn.transaction = MagicMock()
+
     mock_transaction = MagicMock()
     mock_transaction.__aenter__ = AsyncMock(return_value=None)
     mock_transaction.__aexit__ = AsyncMock(return_value=False)
-    mock_conn.transaction.return_value = mock_transaction
+    mock_conn.transaction = MagicMock(return_value=mock_transaction)
 
-    mock_pool.acquire = MagicMock()
-    mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-    mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+    mock_acquire_cm = AsyncMock()
+    mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_acquire_cm.__aexit__ = AsyncMock(return_value=False)
+    mock_pool.acquire = MagicMock(return_value=mock_acquire_cm)
 
     return mock_pool
 
@@ -145,7 +146,7 @@ class TestExecute:
         ):
             await executor.execute("test_db", "SELECT * FROM users")
 
-            mock_conn = mock_pool.acquire.__aenter__.return_value
+            mock_conn = mock_pool.acquire.return_value.__aenter__.return_value
             execute_calls = [call.args[0] for call in mock_conn.execute.call_args_list]
             assert any("statement_timeout" in str(c) for c in execute_calls)
             assert any("work_mem" in str(c) for c in execute_calls)
@@ -160,7 +161,7 @@ class TestExecute:
         ):
             await executor.execute("test_db", "SELECT * FROM users")
 
-            mock_conn = mock_pool.acquire.__aenter__.return_value
+            mock_conn = mock_pool.acquire.return_value.__aenter__.return_value
             mock_conn.transaction.assert_called_once_with(readonly=True)
 
     @pytest.mark.asyncio
@@ -184,14 +185,15 @@ class TestExecute:
         mock_conn = AsyncMock()
         mock_conn.execute = AsyncMock(return_value="SET")
         mock_conn.fetch = AsyncMock(side_effect=asyncpg.QueryCanceledError("timeout"))
-        mock_conn.transaction = MagicMock()
         mock_transaction = MagicMock()
         mock_transaction.__aenter__ = AsyncMock(return_value=None)
         mock_transaction.__aexit__ = AsyncMock(return_value=False)
-        mock_conn.transaction.return_value = mock_transaction
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_conn.transaction = MagicMock(return_value=mock_transaction)
+
+        mock_acquire_cm = AsyncMock()
+        mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_acquire_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_pool.acquire = MagicMock(return_value=mock_acquire_cm)
 
         with patch.object(
             executor._pool_mgr, "get_pool", new_callable=AsyncMock, return_value=mock_pool
@@ -211,14 +213,15 @@ class TestExecute:
         mock_conn = AsyncMock()
         mock_conn.execute = AsyncMock(return_value="SET")
         mock_conn.fetch = AsyncMock(side_effect=asyncpg.PostgresError("syntax error"))
-        mock_conn.transaction = MagicMock()
         mock_transaction = MagicMock()
         mock_transaction.__aenter__ = AsyncMock(return_value=None)
         mock_transaction.__aexit__ = AsyncMock(return_value=False)
-        mock_conn.transaction.return_value = mock_transaction
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_conn.transaction = MagicMock(return_value=mock_transaction)
+
+        mock_acquire_cm = AsyncMock()
+        mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_acquire_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_pool.acquire = MagicMock(return_value=mock_acquire_cm)
 
         with patch.object(
             executor._pool_mgr, "get_pool", new_callable=AsyncMock, return_value=mock_pool
@@ -239,7 +242,7 @@ class TestExecute:
                 "test_db", "SELECT * FROM users", schema_names=["public", "app"]
             )
 
-            mock_conn = mock_pool.acquire.__aenter__.return_value
+            mock_conn = mock_pool.acquire.return_value.__aenter__.return_value
             execute_calls = [str(call.args[0]) for call in mock_conn.execute.call_args_list]
             assert any("search_path" in c for c in execute_calls)
 
@@ -309,14 +312,21 @@ class TestResultProcessing:
 
         assert "hard limit" in str(exc_info.value).lower()
 
-    def test_process_result_truncates_large_cells(self, executor: SqlExecutor) -> None:
-        big_value = "x" * 5000  # Exceeds max_cell_bytes=4096
+    def test_process_result_truncates_large_cells(self) -> None:
+        from pg_mcp.config import Settings
+        from pg_mcp.db.pool import ConnectionPoolManager
+        settings = Settings(
+            pg_user="test", pg_password="test",
+            max_cell_bytes=10, max_result_bytes=10000, max_result_bytes_hard=50000
+        )
+        executor = SqlExecutor(ConnectionPoolManager(settings), settings)
+        big_value = "x" * 100
         records = [{"id": 1, "data": big_value}]
         mock_rows: list[MagicMock] = []
         for rec in records:
             mock_row = MagicMock()
-            mock_row.keys = lambda rec=rec: list(rec.keys())  # type: ignore[misc]
-            mock_row.__getitem__ = lambda self, k, rec=rec: rec[k]  # type: ignore[misc]
+            mock_row.keys = lambda rec=rec: list(rec.keys())
+            mock_row.__getitem__ = lambda self, k, rec=rec: rec[k]
             for k, v in rec.items():
                 setattr(mock_row, k, v)
             mock_rows.append(mock_row)

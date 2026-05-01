@@ -136,9 +136,10 @@ class TestLoadSchema:
             ],
         })
         mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_acquire_cm = AsyncMock()
+        mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_acquire_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_pool.acquire = MagicMock(return_value=mock_acquire_cm)
 
         with patch.object(
             discovery._pool_mgr, "get_pool", new_callable=AsyncMock, return_value=mock_pool
@@ -208,9 +209,10 @@ class TestLoadSchema:
             "allowed_functions": [],
         })
         mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_acquire_cm = AsyncMock()
+        mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_acquire_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_pool.acquire = MagicMock(return_value=mock_acquire_cm)
 
         with patch.object(
             discovery._pool_mgr, "get_pool", new_callable=AsyncMock, return_value=mock_pool
@@ -259,9 +261,10 @@ class TestLoadSchema:
             "allowed_functions": [],
         })
         mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_acquire_cm = AsyncMock()
+        mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_acquire_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_pool.acquire = MagicMock(return_value=mock_acquire_cm)
 
         with patch.object(
             discovery._pool_mgr, "get_pool", new_callable=AsyncMock, return_value=mock_pool
@@ -295,9 +298,10 @@ class TestLoadSchema:
             "allowed_functions": [],
         })
         mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_acquire_cm = AsyncMock()
+        mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_acquire_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_pool.acquire = MagicMock(return_value=mock_acquire_cm)
 
         with patch.object(
             discovery._pool_mgr, "get_pool", new_callable=AsyncMock, return_value=mock_pool

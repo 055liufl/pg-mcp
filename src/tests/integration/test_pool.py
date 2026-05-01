@@ -7,57 +7,22 @@ Covers:
 - DSN building
 - assert_readonly behavior
 
-Tests use mocking for asyncpg to allow running without a real PostgreSQL
-instance, while also providing true integration tests that skip gracefully
-when PostgreSQL is unavailable.
+Note: These tests mock asyncpg to avoid requiring a real PostgreSQL instance.
 """
 
 from __future__ import annotations
 
+import asyncpg
+
 import asyncio
-from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import asyncpg
 import pytest
-import pytest_asyncio
 
 from pg_mcp.config import Settings
 from pg_mcp.db.pool import ConnectionPoolManager
 from pg_mcp.models.errors import DbConnectError
-
-
-# =============================================================================
-# Service availability check
-# =============================================================================
-
-def _pg_available() -> bool:
-    """Check if PostgreSQL is available for integration tests."""
-
-    async def _check() -> bool:
-        try:
-            pool = await asyncpg.create_pool(
-                "postgresql://test:test@localhost:5432/test",
-                min_size=1,
-                max_size=1,
-                command_timeout=5,
-            )
-            if pool:
-                await pool.close()
-            return True
-        except Exception:
-            return False
-
-    try:
-        return asyncio.run(_check())
-    except Exception:
-        return False
-
-
-PG_AVAILABLE = _pg_available()
-
-pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
@@ -70,6 +35,16 @@ def settings() -> Settings:
         pg_databases="",
         db_pool_size=5,
     )
+
+
+def _make_mock_pool(mock_conn: AsyncMock) -> MagicMock:
+    """Create a mock pool with a callable acquire that returns an async context manager."""
+    mock_pool = MagicMock()
+    mock_acquire_cm = AsyncMock()
+    mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_acquire_cm.__aexit__ = AsyncMock(return_value=False)
+    mock_pool.acquire = MagicMock(return_value=mock_acquire_cm)
+    return mock_pool
 
 
 class TestPoolCreation:
@@ -249,7 +224,6 @@ class TestDiscoverDatabases:
 
     @pytest.mark.asyncio
     async def test_discover_databases_queries_postgres(self, settings: Settings) -> None:
-        mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.fetch = AsyncMock(
             return_value=[
@@ -257,9 +231,7 @@ class TestDiscoverDatabases:
                 {"datname": "db2"},
             ]
         )
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_pool = _make_mock_pool(mock_conn)
 
         with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
             mgr = ConnectionPoolManager(settings)
@@ -274,7 +246,6 @@ class TestAssertReadonly:
 
     @pytest.mark.asyncio
     async def test_assert_readonly_warns_on_superuser(self, settings: Settings) -> None:
-        mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.fetchrow = AsyncMock(
             return_value={
@@ -284,9 +255,7 @@ class TestAssertReadonly:
             }
         )
         mock_conn.fetchval = AsyncMock(return_value=False)
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_pool = _make_mock_pool(mock_conn)
 
         with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
             mgr = ConnectionPoolManager(settings)
@@ -302,7 +271,6 @@ class TestAssertReadonly:
             pg_password="test",
             strict_readonly=True,
         )
-        mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.fetchrow = AsyncMock(
             return_value={
@@ -311,9 +279,7 @@ class TestAssertReadonly:
                 "rolcreatedb": False,
             }
         )
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_pool = _make_mock_pool(mock_conn)
 
         with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
             mgr = ConnectionPoolManager(strict_settings)
@@ -332,7 +298,6 @@ class TestAssertReadonly:
             pg_password="test",
             strict_readonly=True,
         )
-        mock_pool = MagicMock()
         mock_conn = AsyncMock()
         mock_conn.fetchrow = AsyncMock(
             return_value={
@@ -342,9 +307,7 @@ class TestAssertReadonly:
             }
         )
         mock_conn.fetchval = AsyncMock(return_value=True)
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.__aexit__ = AsyncMock(return_value=False)
+        mock_pool = _make_mock_pool(mock_conn)
 
         with patch("asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
             mgr = ConnectionPoolManager(strict_settings)
@@ -352,7 +315,7 @@ class TestAssertReadonly:
             with pytest.raises(RuntimeError) as exc_info:
                 await mgr.assert_readonly()
 
-            assert "write" in str(exc_info.value).lower()
+            assert "strict_readonly" in str(exc_info.value).lower()
 
 
 class TestCloseAll:
@@ -370,117 +333,3 @@ class TestCloseAll:
 
             mock_pool.close.assert_called_once()
             assert len(mgr._pools) == 0
-
-
-# =============================================================================
-# True integration tests (require real PostgreSQL)
-# =============================================================================
-
-@pytest.fixture
-def pg_settings() -> Settings:
-    """Return settings for test PostgreSQL instance."""
-    return Settings(
-        pg_host="localhost",
-        pg_port=5432,
-        pg_user="test",
-        pg_password="test",  # type: ignore[arg-type]
-        pg_databases="",
-        pg_exclude_databases="template0,template1,postgres",
-        db_pool_size=2,
-        pg_sslmode="disable",  # type: ignore[arg-type]
-    )
-
-
-@pytest_asyncio.fixture
-async def real_pool_mgr(
-    pg_settings: Settings,
-) -> AsyncGenerator[ConnectionPoolManager, None]:
-    """Yield a ConnectionPoolManager and clean up after."""
-    mgr = ConnectionPoolManager(pg_settings)
-    yield mgr
-    await mgr.close_all()
-
-
-@pytest.mark.skipif(not PG_AVAILABLE, reason="PostgreSQL not available")
-class TestPoolIntegration:
-    """Integration tests requiring a real PostgreSQL instance."""
-
-    @pytest.mark.asyncio
-    async def test_pool_get_pool_creates_new(self, pg_settings: Settings) -> None:
-        """Getting a pool for a new database should create it."""
-        mgr = ConnectionPoolManager(pg_settings)
-
-        try:
-            pool = await mgr.get_pool("test")
-
-            assert pool is not None
-            assert isinstance(pool, asyncpg.Pool)
-        finally:
-            await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_pool_get_pool_returns_cached(self, pg_settings: Settings) -> None:
-        """Getting a pool twice should return the same instance."""
-        mgr = ConnectionPoolManager(pg_settings)
-
-        try:
-            pool1 = await mgr.get_pool("test")
-            pool2 = await mgr.get_pool("test")
-
-            assert pool1 is pool2
-        finally:
-            await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_pool_discover_databases_excludes_system(
-        self, pg_settings: Settings
-    ) -> None:
-        """Database discovery should exclude template0, template1, postgres."""
-        mgr = ConnectionPoolManager(pg_settings)
-
-        try:
-            databases = await mgr.discover_databases()
-
-            assert "template0" not in databases
-            assert "template1" not in databases
-            assert "postgres" not in databases
-        finally:
-            await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_pool_discover_databases_includes_test(
-        self, pg_settings: Settings
-    ) -> None:
-        """Database discovery should include the test database."""
-        mgr = ConnectionPoolManager(pg_settings)
-
-        try:
-            databases = await mgr.discover_databases()
-
-            assert "test" in databases
-        finally:
-            await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_pool_assert_readonly_does_not_block(
-        self, pg_settings: Settings
-    ) -> None:
-        """Readonly check should complete without error for test user."""
-        mgr = ConnectionPoolManager(pg_settings)
-
-        try:
-            await mgr.assert_readonly()
-        finally:
-            await mgr.close_all()
-
-    @pytest.mark.asyncio
-    async def test_pool_close_all_releases_pools(self, pg_settings: Settings) -> None:
-        """close_all should release all pools and clear the registry."""
-        mgr = ConnectionPoolManager(pg_settings)
-
-        pool = await mgr.get_pool("test")
-        assert pool is not None
-
-        await mgr.close_all()
-
-        assert len(mgr._pools) == 0

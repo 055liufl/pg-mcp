@@ -160,15 +160,15 @@ class ResultValidator:
 
         denied = self._is_denied(schema.database)
         policy = (
-            ValidationDataPolicy.metadata_only
+            ValidationDataPolicy.METADATA_ONLY
             if denied
             else self._settings.validation_data_policy
         )
 
-        if policy == ValidationDataPolicy.full and result.rows:
+        if policy == ValidationDataPolicy.FULL and result.rows:
             sample = result.rows[: self._settings.validation_sample_rows]
             parts.append(f"Sample rows:\n{json.dumps(sample, ensure_ascii=False)}")
-        elif policy == ValidationDataPolicy.masked and result.rows:
+        elif policy == ValidationDataPolicy.MASKED and result.rows:
             sample = [
                 _mask_row(row, result.columns)
                 for row in result.rows[: self._settings.validation_sample_rows]
