@@ -190,5 +190,7 @@ async def _periodic_refresh(cache: SchemaCache, interval: int) -> None:
         except asyncio.CancelledError:
             log.debug("periodic_refresh_cancelled")
             raise
+        except OSError as e:
+            log.error("periodic_refresh_failed", error=str(e))
         except Exception:
             log.exception("periodic_refresh_failed")
