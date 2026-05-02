@@ -98,8 +98,20 @@ _RECOVERABLE_PG_SQLSTATES: frozenset[str] = frozenset({
     "42P10",  # invalid_column_reference (e.g. ORDER BY non-existent col)
 })
 
+# Columns that are commonly hallucinated by LLMs when they cannot see the
+# real schema clearly.  Used to enrich retry feedback with concrete
+# alternatives.
+_COMMON_AMOUNT_COLS: frozenset[str] = frozenset({
+    "amount", "total_amount", "sales_amount", "revenue_amount",
+    "gmv", "total_sales", "sales_total", "order_total",
+})
 
-def _build_execute_feedback(error: SqlExecuteError) -> str | None:
+
+def _build_execute_feedback(
+    error: SqlExecuteError,
+    schema: DatabaseSchema | None = None,
+    sql: str | None = None,
+) -> str | None:
     """Translate a PG execution error into actionable LLM feedback.
 
     Returns ``None`` for unrecoverable errors (timeout, permission denied,
@@ -109,6 +121,43 @@ def _build_execute_feedback(error: SqlExecuteError) -> str | None:
     if sqlstate not in _RECOVERABLE_PG_SQLSTATES:
         return None
     msg = str(error).strip()
+
+    # For undefined_column, try to extract the hallucinated column name
+    # and suggest real alternatives from the schema.
+    if sqlstate == "42703" and schema is not None:
+        # Collect all amount / numeric columns from the schema as a
+        # concrete reference list.
+        real_cols: list[str] = []
+        for table in schema.tables:
+            for col in table.columns:
+                cname = col.name.lower()
+                # Include any column that looks like an amount / metric.
+                if any(
+                    kw in cname
+                    for kw in (
+                        "amount", "revenue", "total", "net", "gross",
+                        "discount", "tax", "shipping", "cost", "price",
+                        "quantity", "count", "value", "fee", "profit",
+                    )
+                ):
+                    real_cols.append(
+                        f"{table.schema_name}.{table.table_name}.{col.name}"
+                    )
+        if real_cols:
+            col_hint = (
+                "Available numeric/amount columns in this database: "
+                + ", ".join(real_cols[:20])
+            )
+            if len(real_cols) > 20:
+                col_hint += f" (and {len(real_cols) - 20} more)"
+            return (
+                f"Previous SQL failed at execution: {msg}. "
+                f"Do NOT invent column names like "
+                f"{', '.join(sorted(_COMMON_AMOUNT_COLS))}. "
+                f"Use ONLY exact column names from the schema. "
+                f"{col_hint}"
+            )
+
     return (
         f"Previous SQL failed at execution: {msg}. The referenced "
         f"column/table/function does not exist in this PostgreSQL "
@@ -304,7 +353,7 @@ class QueryEngine:
             except SqlTimeoutError:
                 raise
             except SqlExecuteError as e:
-                exec_feedback = _build_execute_feedback(e)
+                exec_feedback = _build_execute_feedback(e, schema=schema, sql=sql)
                 log.warning(
                     "sql_execute_failed",
                     attempt=attempt,

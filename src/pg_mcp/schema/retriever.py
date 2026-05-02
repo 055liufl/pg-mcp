@@ -98,6 +98,14 @@ _ZH_SYNONYMS: dict[str, tuple[str, ...]] = {
     "终生消费": ("lifetime",),
     "工单": ("ticket", "support"),
     "客服": ("support",),
+    # Business metrics (often used in English acronyms)
+    "gmv": ("sales", "revenue", "net_amount", "gross_amount", "total_amount"),
+    "roi": ("revenue", "cost", "spend", "ad_cost"),
+    "ltv": ("lifetime_value", "customer_value", "total_revenue"),
+    "arpu": ("revenue", "user_count", "customer_count"),
+    "dau": ("active", "user", "customer", "session"),
+    "mau": ("active", "user", "customer", "session"),
+    "wau": ("active", "user", "customer", "web_events", "events"),
 }
 
 TokenSet = set[str]
@@ -218,11 +226,19 @@ class SchemaRetriever:
         # Sort by score descending
         scored_tables.sort(key=lambda x: -x[1])
 
-        # Take top N tables with positive scores, or fallback to first N
+        # Take top N tables with positive scores, or fallback to first N.
+        # When very few tables score positively (vague query like "rolling
+        # GMV"), keywords may not hit any table name directly.  Widen the
+        # fallback window so the LLM still sees enough schema to pick the
+        # right table instead of hallucinating one.
         top_n = 20
         top_tables = [t for t, s in scored_tables[:top_n] if s > 0]
         if not top_tables:
             top_tables = [t for t, _ in scored_tables[:top_n]]
+        elif len(top_tables) < 5:
+            # Low-confidence match — expand window to give LLM more context.
+            extra = [t for t, s in scored_tables[top_n:top_n * 2] if s > 0]
+            top_tables.extend(extra)
 
         # Include related foreign keys
         related_fks = self._get_related_foreign_keys(top_tables, schema)
@@ -234,15 +250,21 @@ class SchemaRetriever:
 
         CJK tokens are enriched with English synonyms so Chinese
         natural-language queries can match English schema entity names.
+        English acronym / metric tokens (e.g. ``gmv``, ``roi``, ``ltv``)
+        are also expanded to their underlying business terms so that
+        they can hit column and table names in the schema index.
         """
         tokens = self._tokenize(user_query.lower())
         enriched: set[str] = set(tokens)
         for tok in tokens:
-            # Only CJK tokens need synonym expansion.
-            if not any("\u4e00" <= c <= "\u9fff" for c in tok):
-                continue
+            # CJK substring synonym expansion.
+            if any("\u4e00" <= c <= "\u9fff" for c in tok):
+                for zh_key, en_words in _ZH_SYNONYMS.items():
+                    if zh_key in tok:
+                        enriched.update(en_words)
+            # Exact-match expansion for English acronym / metric tokens.
             for zh_key, en_words in _ZH_SYNONYMS.items():
-                if zh_key in tok:
+                if tok == zh_key.lower():
                     enriched.update(en_words)
         return enriched
 
