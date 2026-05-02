@@ -132,6 +132,7 @@ class MockSqlExecutor:
         truncated: bool = False,
         truncated_reason: Optional[str] = None,
         raise_error: Optional[Exception] = None,
+        raise_errors: Optional[list[Optional[Exception]]] = None,
     ):
         self._columns = columns or ["id"]
         self._column_types = column_types or ["integer"]
@@ -140,6 +141,9 @@ class MockSqlExecutor:
         self._truncated = truncated
         self._truncated_reason = truncated_reason
         self._raise_error = raise_error
+        # Queue of per-call exceptions (None entries return normally).
+        # When exhausted, subsequent calls return the configured rows.
+        self._raise_queue: list[Optional[Exception]] = list(raise_errors or [])
         self.execute_calls: list[tuple[str, str, Optional[list[str]], bool]] = []
 
     async def execute(
@@ -150,7 +154,11 @@ class MockSqlExecutor:
         is_explain: bool = False,
     ) -> ExecutionResult:
         self.execute_calls.append((database, sql, schema_names, is_explain))
-        if self._raise_error:
+        if self._raise_queue:
+            err = self._raise_queue.pop(0)
+            if err is not None:
+                raise err
+        elif self._raise_error:
             raise self._raise_error
         return ExecutionResult(
             columns=self._columns,

@@ -112,7 +112,9 @@ class SqlExecutor:
             except asyncpg.QueryCanceledError:
                 raise SqlTimeoutError(f"Query timed out ({timeout_s}s)")
             except asyncpg.PostgresError as e:
-                raise SqlExecuteError(str(e))
+                raise SqlExecuteError(
+                    str(e), sqlstate=getattr(e, "sqlstate", None)
+                )
 
         return self._process_result(rows)
 

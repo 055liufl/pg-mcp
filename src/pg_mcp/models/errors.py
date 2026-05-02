@@ -132,6 +132,10 @@ class SqlExecuteError(PgMcpError):
 
     code = ErrorCode.E_SQL_EXECUTE
 
+    def __init__(self, message: str, *, sqlstate: str | None = None) -> None:
+        super().__init__(message)
+        self.sqlstate = sqlstate
+
 
 class SqlTimeoutError(PgMcpError):
     """The SQL query exceeded the configured execution timeout."""

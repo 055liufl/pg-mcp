@@ -210,6 +210,84 @@ class TestValidationRetry:
             await engine.execute(request)
 
 
+class TestExecuteRetry:
+    """Tests for the execute-stage retry loop (PG undefined column / table)."""
+
+    @pytest.mark.asyncio
+    async def test_undefined_column_triggers_retry_then_succeeds(self) -> None:
+        # SqlExecuteError carrying sqlstate 42703 (undefined_column);
+        # the orchestrator should retry instead of immediately raising.
+        from pg_mcp.models.errors import SqlExecuteError
+
+        err = SqlExecuteError(
+            "column f.sales_amount does not exist", sqlstate="42703"
+        )
+        executor = MockSqlExecutor(raise_errors=[err, None])
+        engine = _make_engine(
+            sql_exec=executor, settings=_make_settings(max_retries=2)
+        )
+        request = QueryRequest(query="2025 revenue", database="test_db")
+
+        response = await engine.execute(request)
+
+        assert response.error is None
+        assert len(executor.execute_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_undefined_table_triggers_retry_then_succeeds(self) -> None:
+        from pg_mcp.models.errors import SqlExecuteError
+
+        err = SqlExecuteError(
+            'relation "fact.fact_gmv" does not exist', sqlstate="42P01"
+        )
+        executor = MockSqlExecutor(raise_errors=[err, None])
+        engine = _make_engine(
+            sql_exec=executor, settings=_make_settings(max_retries=2)
+        )
+        request = QueryRequest(query="rolling GMV", database="test_db")
+
+        response = await engine.execute(request)
+
+        assert response.error is None
+        assert len(executor.execute_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_unrecoverable_error_raises_immediately(self) -> None:
+        # Syntax errors / permission denied / etc. should not trigger retry.
+        from pg_mcp.models.errors import SqlExecuteError
+
+        err = SqlExecuteError("permission denied for table x", sqlstate="42501")
+        executor = MockSqlExecutor(raise_errors=[err, None])
+        engine = _make_engine(
+            sql_exec=executor, settings=_make_settings(max_retries=2)
+        )
+        request = QueryRequest(query="x", database="test_db")
+
+        with pytest.raises(SqlExecuteError):
+            await engine.execute(request)
+        assert len(executor.execute_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_recoverable_error_persists_until_retries_exhausted(
+        self,
+    ) -> None:
+        from pg_mcp.models.errors import SqlExecuteError
+
+        err1 = SqlExecuteError("col1 does not exist", sqlstate="42703")
+        err2 = SqlExecuteError("col2 does not exist", sqlstate="42703")
+        err3 = SqlExecuteError("col3 does not exist", sqlstate="42703")
+        executor = MockSqlExecutor(raise_errors=[err1, err2, err3])
+        engine = _make_engine(
+            sql_exec=executor, settings=_make_settings(max_retries=2)
+        )
+        request = QueryRequest(query="x", database="test_db")
+
+        with pytest.raises(SqlExecuteError):
+            await engine.execute(request)
+        # 1 initial + 2 retries
+        assert len(executor.execute_calls) == 3
+
+
 class TestResultValidation:
     """Tests for AI result validation flow."""
 
@@ -344,13 +422,13 @@ class TestErrorPropagation:
 
     @pytest.mark.asyncio
     async def test_executor_error_converted_to_sql_execute_error(self) -> None:
-        import asyncpg
+        # SqlExecutor wraps asyncpg.PostgresError into SqlExecuteError before
+        # raising; orchestrator catches the wrapped form.
+        from pg_mcp.models.errors import SqlExecuteError
 
-        executor = MockSqlExecutor(raise_error=asyncpg.PostgresError("syntax error"))
+        executor = MockSqlExecutor(raise_error=SqlExecuteError("syntax error"))
         engine = _make_engine(sql_exec=executor)
         request = QueryRequest(query="List all users", database="test_db")
-
-        from pg_mcp.models.errors import SqlExecuteError
 
         with pytest.raises(SqlExecuteError):
             await engine.execute(request)

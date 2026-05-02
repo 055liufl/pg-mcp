@@ -7,7 +7,6 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
-import asyncpg
 import structlog
 
 from pg_mcp.config import Settings
@@ -84,6 +83,37 @@ def _build_validator_feedback(reason: str) -> str:
     return (
         f"{base}. `{bad_func}` does NOT exist in PostgreSQL — replace it "
         f"with `{hint}`."
+    )
+
+
+# PostgreSQL SQLSTATE codes that indicate the LLM referenced a name that
+# doesn't exist in the schema. These are recoverable on retry — feed the
+# error back so the LLM can pick a different column / table / function.
+_RECOVERABLE_PG_SQLSTATES: frozenset[str] = frozenset({
+    "42703",  # undefined_column
+    "42P01",  # undefined_table
+    "42883",  # undefined_function
+    "42704",  # undefined_object
+    "42P02",  # undefined_parameter
+    "42P10",  # invalid_column_reference (e.g. ORDER BY non-existent col)
+})
+
+
+def _build_execute_feedback(error: SqlExecuteError) -> str | None:
+    """Translate a PG execution error into actionable LLM feedback.
+
+    Returns ``None`` for unrecoverable errors (timeout, permission denied,
+    syntax error, etc.) so callers know to raise instead of retrying.
+    """
+    sqlstate = error.sqlstate or ""
+    if sqlstate not in _RECOVERABLE_PG_SQLSTATES:
+        return None
+    msg = str(error).strip()
+    return (
+        f"Previous SQL failed at execution: {msg}. The referenced "
+        f"column/table/function does not exist in this PostgreSQL "
+        f"database — re-read the schema context and pick a name that "
+        f"actually appears there. Do NOT invent column or table names."
     )
 
 
@@ -238,46 +268,58 @@ class QueryEngine:
             val_result = self._sql_val.validate(
                 sql, schema, schema_names=schema_names
             )
-            if val_result.valid:
-                is_explain = val_result.is_explain
-                break
-
-            log.warning(
-                "sql_validation_failed",
-                attempt=attempt,
-                reason=val_result.reason,
-                sql=sanitize_sql(sql),
-            )
-
-            if attempt < self._settings.max_retries:
-                feedback = _build_validator_feedback(val_result.reason or "")
-            else:
+            if not val_result.valid:
+                log.warning(
+                    "sql_validation_failed",
+                    attempt=attempt,
+                    reason=val_result.reason,
+                    sql=sanitize_sql(sql),
+                )
+                if attempt < self._settings.max_retries:
+                    feedback = _build_validator_feedback(val_result.reason or "")
+                    continue
                 if val_result.code == "E_SQL_PARSE":
                     raise SqlParseError(val_result.reason or "SQL parse failed")
                 raise SqlUnsafeError(val_result.reason or "SQL safety check failed")
+
+            is_explain = val_result.is_explain
+
+            # 9. return_type=sql: return generated SQL without executing
+            if request.return_type == "sql":
+                return QueryResponse(
+                    request_id=request_id,
+                    database=database,
+                    sql=sql,
+                    schema_loaded_at=schema_loaded_at,
+                )
+
+            # 10. SQL execution (in retry loop so undefined column / table
+            # errors can feed back to the LLM for correction).
+            exec_start = time.monotonic()
+            try:
+                exec_result = await self._sql_exec.execute(
+                    database, sql, schema_names=schema_names, is_explain=is_explain
+                )
+                break  # success
+            except SqlTimeoutError:
+                raise
+            except SqlExecuteError as e:
+                exec_feedback = _build_execute_feedback(e)
+                log.warning(
+                    "sql_execute_failed",
+                    attempt=attempt,
+                    sqlstate=e.sqlstate,
+                    reason=str(e),
+                    sql=sanitize_sql(sql),
+                    recoverable=exec_feedback is not None,
+                )
+                if exec_feedback is None or attempt >= self._settings.max_retries:
+                    raise
+                feedback = exec_feedback
+                continue
         else:
             # All retries exhausted without valid SQL
             raise SqlGenerateError("Failed to generate valid SQL after all retries")
-
-        # 9. return_type=sql: return generated SQL without executing
-        if request.return_type == "sql":
-            return QueryResponse(
-                request_id=request_id,
-                database=database,
-                sql=sql,
-                schema_loaded_at=schema_loaded_at,
-            )
-
-        # 10. SQL execution
-        exec_start = time.monotonic()
-        try:
-            exec_result = await self._sql_exec.execute(
-                database, sql, schema_names=schema_names, is_explain=is_explain
-            )
-        except SqlTimeoutError:
-            raise
-        except asyncpg.PostgresError as e:
-            raise SqlExecuteError(str(e))
 
         log.info(
             "sql_executed",
@@ -335,8 +377,8 @@ class QueryEngine:
                         )
                     except SqlTimeoutError:
                         raise
-                    except asyncpg.PostgresError as e:
-                        raise SqlExecuteError(str(e))
+                    except SqlExecuteError:
+                        raise
 
                     # Re-validate the fixed result
                     verdict = await self._result_val.validate(
