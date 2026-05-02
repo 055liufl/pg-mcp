@@ -74,9 +74,11 @@ class TestDefaults:
         assert settings.pg_exclude_databases == "template0,template1,postgres"
 
     def test_default_openai_model(self) -> None:
-        settings = Settings(pg_user="test", pg_password="test")
+        # Read the field default directly from the model definition so that
+        # a local ``.env`` file does not interfere with the assertion.
+        default = Settings.model_fields["openai_model"].default
 
-        assert settings.openai_model == "gpt-5-mini"
+        assert default == "gpt-5-mini"
 
     def test_default_validation_disabled(self) -> None:
         settings = Settings(pg_user="test", pg_password="test")

@@ -8,12 +8,14 @@ and repr output.
 
 from __future__ import annotations
 
-import os
 from enum import Enum
-from typing import Self
+from pathlib import Path
 
-from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
+from pydantic import Field, SecretStr, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# .env file lives at the project root (next to src/).
+_ENV_FILE = str(Path(__file__).resolve().parent.parent.parent / ".env")
 
 
 class SslMode(str, Enum):
@@ -44,7 +46,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -61,18 +63,11 @@ class Settings(BaseSettings):
     db_pool_size: int = 5
     strict_readonly: bool = False
 
-    # OpenAI — 强制只从系统环境变量读取，.env 文件中的同名键被忽略
+    # OpenAI
     openai_api_key: SecretStr = Field(default=SecretStr(""))
     openai_model: str = "gpt-5-mini"
     openai_base_url: str | None = None
     openai_timeout: int = 60
-
-    @model_validator(mode="after")
-    def _enforce_openai_from_env_only(self) -> Self:
-        """覆写 OpenAI 配置为系统环境变量值，忽略 .env 文件中的同名键."""
-        self.openai_api_key = SecretStr(os.environ.get("OPENAI_API_KEY", ""))
-        self.openai_base_url = os.environ.get("OPENAI_BASE_URL")
-        return self
 
     # Query limits
     query_timeout: int = 30
