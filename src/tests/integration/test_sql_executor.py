@@ -276,7 +276,7 @@ class TestResultProcessing:
 
         assert result.truncated is True
         assert result.row_count == 100
-        assert "limited to 100 rows" in (result.truncated_reason or "")
+        assert "已限制为 100 行" in (result.truncated_reason or "")
 
     def test_process_result_truncates_on_soft_size_limit(
         self, executor: SqlExecutor
@@ -299,7 +299,7 @@ class TestResultProcessing:
         result = executor._process_result(mock_rows)
 
         assert result.truncated is True
-        assert "soft limit" in (result.truncated_reason or "").lower()
+        assert "软限制" in (result.truncated_reason or "").lower()
 
     def test_process_result_raises_on_hard_size_limit(self, executor: SqlExecutor) -> None:
         # Create rows that exceed max_result_bytes_hard (2048)
@@ -320,7 +320,7 @@ class TestResultProcessing:
         with pytest.raises(ResultTooLargeError) as exc_info:
             executor._process_result(mock_rows)
 
-        assert "hard limit" in str(exc_info.value).lower()
+        assert "硬限制" in str(exc_info.value).lower()
 
     def test_process_result_truncates_large_cells(self) -> None:
         from pg_mcp.config import Settings
@@ -344,7 +344,7 @@ class TestResultProcessing:
         result = executor._process_result(mock_rows)
 
         cell = result.rows[0][1]
-        assert "truncated" in cell
+        assert "已截断" in cell
 
 
 class TestConvertValue:
