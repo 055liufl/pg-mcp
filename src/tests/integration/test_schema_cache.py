@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
 
 from pg_mcp.config import Settings
 from pg_mcp.models.errors import SchemaNotReadyError
@@ -62,12 +64,14 @@ def sample_schema() -> DatabaseSchema:
     )
 
 
-@pytest.fixture
-def cache(mock_redis: AsyncMock, settings: Settings) -> SchemaCache:
+@pytest_asyncio.fixture
+async def cache(mock_redis: AsyncMock, settings: Settings) -> AsyncGenerator[SchemaCache, None]:
     from pg_mcp.db.pool import ConnectionPoolManager
 
     pool_mgr = ConnectionPoolManager(settings)
-    return SchemaCache(mock_redis, pool_mgr, settings)
+    cache = SchemaCache(mock_redis, pool_mgr, settings)
+    yield cache
+    await cache.close()
 
 
 class TestSingleflight:
