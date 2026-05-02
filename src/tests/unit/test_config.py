@@ -56,9 +56,12 @@ class TestDefaults:
         assert settings.pg_host == "localhost"
 
     def test_default_pg_port(self) -> None:
-        settings = Settings(pg_user="test", pg_password="test")
+        # Read the field default directly from the model definition so that
+        # a local ``.env`` file (which pydantic-settings loads automatically)
+        # does not interfere with the assertion.
+        default = Settings.model_fields["pg_port"].default
 
-        assert settings.pg_port == 5432
+        assert default == 5432
 
     def test_default_pg_sslmode(self) -> None:
         settings = Settings(pg_user="test", pg_password="test")
