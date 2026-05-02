@@ -9,8 +9,6 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
-
 from pg_mcp.observability.sanitizer import mask_pii, sanitize_sql
 
 
@@ -50,7 +48,7 @@ class TestSanitizeSql:
 
     def test_sanitize_sql_handles_quoted_identifier(self) -> None:
         # Double-quoted identifiers should NOT be replaced
-        sql = 'SELECT * FROM "Users" WHERE name = \'Alice\''
+        sql = "SELECT * FROM \"Users\" WHERE name = 'Alice'"
         result = sanitize_sql(sql)
 
         assert '"Users"' in result

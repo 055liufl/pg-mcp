@@ -20,24 +20,24 @@ from pg_mcp.protocols import ExecutionResult, SqlGenerationResult
 
 
 def _make_settings(**overrides: object) -> Settings:
-    defaults = dict(
-        pg_user="test",
-        pg_password="test",
-        enable_validation=True,
-        validation_sample_rows=10,
-        validation_data_policy=ValidationDataPolicy.METADATA_ONLY,
-        validation_deny_list="",
-        validation_confidence_threshold=-1.0,
-        openai_model="gpt-5-mini",
-    )
+    defaults = {
+        "pg_user": "test",
+        "pg_password": "test",
+        "enable_validation": True,
+        "validation_sample_rows": 10,
+        "validation_data_policy": ValidationDataPolicy.METADATA_ONLY,
+        "validation_deny_list": "",
+        "validation_confidence_threshold": -1.0,
+        "openai_model": "gpt-5-mini",
+    }
     defaults.update(overrides)
     return Settings(**defaults)  # type: ignore[arg-type]
 
 
 def _make_result(
     rows: list[list] | None = None,
-    row_count: Optional[int] = None,
-    columns: Optional[list[str]] = None,
+    row_count: int | None = None,
+    columns: list[str] | None = None,
 ) -> ExecutionResult:
     cols = columns or ["id", "name"]
     r = rows or [[1, "Alice"], [2, "Bob"]]
@@ -118,9 +118,7 @@ class TestShouldValidate:
         assert validator.should_validate("db", sql, result, gen) is True
 
     def test_low_logprob_triggers(self) -> None:
-        settings = _make_settings(
-            enable_validation=True, validation_confidence_threshold=-0.5
-        )
+        settings = _make_settings(enable_validation=True, validation_confidence_threshold=-0.5)
         validator = ResultValidator(AsyncMock(), settings)
         result = _make_result()
         gen = _make_generation(avg_logprob=-0.8)
@@ -138,9 +136,7 @@ class TestShouldValidate:
         assert validator.should_validate("db", sql, result, gen) is False
 
     def test_high_logprob_no_trigger(self) -> None:
-        settings = _make_settings(
-            enable_validation=True, validation_confidence_threshold=-0.5
-        )
+        settings = _make_settings(enable_validation=True, validation_confidence_threshold=-0.5)
         validator = ResultValidator(AsyncMock(), settings)
         result = _make_result()
         gen = _make_generation(avg_logprob=-0.3)
@@ -302,9 +298,7 @@ class TestHierarchicalDenyList:
             ],
         )
 
-        prompt = validator._build_prompt(
-            "show users", "SELECT id FROM users", result, schema
-        )
+        prompt = validator._build_prompt("show users", "SELECT id FROM users", result, schema)
 
         assert "Sample rows" not in prompt
 
@@ -456,9 +450,7 @@ class TestValidate:
         client = AsyncMock()
         import asyncio
 
-        client.chat.completions.create = AsyncMock(
-            side_effect=asyncio.TimeoutError
-        )
+        client.chat.completions.create = AsyncMock(side_effect=asyncio.TimeoutError)
         settings = _make_settings()
         validator = ResultValidator(client, settings)
         result = _make_result()

@@ -11,42 +11,45 @@ from pg_mcp.config import Settings
 from pg_mcp.models.errors import LlmError, LlmTimeoutError
 from pg_mcp.protocols import SqlGenerationResult
 
-SQL_GENERATION_PROMPT = """You are a PostgreSQL SQL expert. Given the database schema below, generate a SQL query to answer the user's question.
-
-Database Schema:
-{schema_context}
-
-User Question: {query}
-
-Requirements:
-- Generate only SELECT queries (or WITH ... SELECT)
-- Do not use any functions that modify data
-- Ensure the query is syntactically correct PostgreSQL
-- Use appropriate JOINs when multiple tables are needed
-- Add LIMIT if the user asks for a limited number of results
-
-PostgreSQL dialect constraints — use **only** PostgreSQL functions. Do NOT
-use BigQuery / MySQL / SQL Server / Snowflake function names. The following
-functions DO NOT EXIST in PostgreSQL — never emit them:
-- `timestamp_trunc`, `datetime_trunc`, `time_trunc`, `timestamptz_trunc` →
-  use `date_trunc(unit, ts)` for ALL timestamp/date types.
-- `safe_cast`, `try_cast` → use `CAST(value AS type)` or `value::type`.
-- `datetime_part`, `timestamp_part`, `datetime_diff`, `timestamp_diff`,
-  `date_diff` → use `EXTRACT(field FROM ts)` or `(a - b)` arithmetic.
-- `date_add`, `dateadd`, `timestampadd` → use `ts + INTERVAL 'N units'`.
-- `concat_ws` works (PostgreSQL has it), but prefer `||` for plain
-  concatenation. Use `||` (NOT `+`) to concatenate strings.
-- Composite type field access: if a column's type is a PostgreSQL composite
-  type (e.g. `postal_address`), access its fields with parentheses:
-  `(alias.column).field_name` — e.g. `(a.address).city`.
-
-If unsure about a function name, prefer SQL standard keywords (CASE,
-COALESCE, NULLIF, GREATEST, LEAST) or stick to functions present in
-PostgreSQL's `pg_proc`.
-
-{feedback}
-
-Respond with ONLY the SQL query, no explanations."""
+SQL_GENERATION_PROMPT = (
+    "You are a PostgreSQL SQL expert. Given the database schema below, "
+    "generate a SQL query to answer the user's question.\n"
+    "\n"
+    "Database Schema:\n"
+    "{schema_context}\n"
+    "\n"
+    "User Question: {query}\n"
+    "\n"
+    "Requirements:\n"
+    "- Generate only SELECT queries (or WITH ... SELECT)\n"
+    "- Do not use any functions that modify data\n"
+    "- Ensure the query is syntactically correct PostgreSQL\n"
+    "- Use appropriate JOINs when multiple tables are needed\n"
+    "- Add LIMIT if the user asks for a limited number of results\n"
+    "\n"
+    "PostgreSQL dialect constraints — use **only** PostgreSQL functions. "
+    "Do NOT use BigQuery / MySQL / SQL Server / Snowflake function names. "
+    "The following functions DO NOT EXIST in PostgreSQL — never emit them:\n"
+    "- `timestamp_trunc`, `datetime_trunc`, `time_trunc`, `timestamptz_trunc` →\n"
+    "  use `date_trunc(unit, ts)` for ALL timestamp/date types.\n"
+    "- `safe_cast`, `try_cast` → use `CAST(value AS type)` or `value::type`.\n"
+    "- `datetime_part`, `timestamp_part`, `datetime_diff`, `timestamp_diff`,\n"
+    "  `date_diff` → use `EXTRACT(field FROM ts)` or `(a - b)` arithmetic.\n"
+    "- `date_add`, `dateadd`, `timestampadd` → use `ts + INTERVAL 'N units'`.\n"
+    "- `concat_ws` works (PostgreSQL has it), but prefer `||` for plain\n"
+    "  concatenation. Use `||` (NOT `+`) to concatenate strings.\n"
+    "- Composite type field access: if a column's type is a PostgreSQL composite\n"
+    "  type (e.g. `postal_address`), access its fields with parentheses:\n"
+    "  `(alias.column).field_name` — e.g. `(a.address).city`.\n"
+    "\n"
+    "If unsure about a function name, prefer SQL standard keywords (CASE,\n"
+    "COALESCE, NULLIF, GREATEST, LEAST) or stick to functions present in\n"
+    "PostgreSQL's `pg_proc`.\n"
+    "\n"
+    "{feedback}\n"
+    "\n"
+    "Respond with ONLY the SQL query, no explanations."
+)
 
 
 class SqlGenerator:
@@ -99,10 +102,10 @@ class SqlGenerator:
                 ),
                 timeout=self._settings.openai_timeout,
             )
-        except TimeoutError:
-            raise LlmTimeoutError("SQL 生成 LLM 调用超时")
+        except TimeoutError as e:
+            raise LlmTimeoutError("SQL 生成 LLM 调用超时") from e
         except openai.APIError as e:
-            raise LlmError(f"SQL 生成 LLM 调用失败: {e}")
+            raise LlmError(f"SQL 生成 LLM 调用失败: {e}") from e
 
         raw_sql = response.choices[0].message.content or ""
         sql = self._clean_sql(raw_sql)

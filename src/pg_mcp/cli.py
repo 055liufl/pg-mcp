@@ -54,14 +54,12 @@ async def _run_server(transport: str, settings: Settings) -> None:
 
     import redis.asyncio as redis
 
-    redis_client = redis.from_url(settings.redis_url)
+    redis_client = redis.from_url(settings.redis_url)  # type: ignore[no-untyped-call]
     cache = SchemaCache(redis_client, pool_mgr, settings)
-    retriever = SchemaRetriever(
-        max_tables_for_full=settings.schema_max_tables_for_full_context
-    )
+    retriever = SchemaRetriever(max_tables_for_full=settings.schema_max_tables_for_full_context)
 
     # Track background tasks so we can cancel + await them on shutdown.
-    bg_tasks: set[asyncio.Task] = set()
+    bg_tasks: set[asyncio.Task[None]] = set()
 
     try:
         # 1. Discover databases (PG_DATABASES overrides auto-discovery).
@@ -94,12 +92,8 @@ async def _run_server(transport: str, settings: Settings) -> None:
         # Wire schema-load observers so that downstream caches (DB
         # inference summaries, retrieval indices) are rebuilt on each
         # successful schema load and dropped on invalidation/refresh.
-        cache.add_loaded_hook(
-            lambda db, schema: db_inference.build_summary(schema)
-        )
-        cache.add_loaded_hook(
-            lambda db, schema: retriever.install_index(db, schema)
-        )
+        cache.add_loaded_hook(lambda db, schema: db_inference.build_summary(schema))
+        cache.add_loaded_hook(lambda db, schema: retriever.install_index(db, schema))
         cache.add_invalidated_hook(db_inference.remove_summary)
         cache.add_invalidated_hook(retriever.invalidate_index)
 

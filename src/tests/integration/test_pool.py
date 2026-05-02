@@ -12,12 +12,9 @@ Note: These tests mock asyncpg to avoid requiring a real PostgreSQL instance.
 
 from __future__ import annotations
 
-import asyncpg
-
-import asyncio
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncpg
 import pytest
 
 from pg_mcp.config import Settings
@@ -104,6 +101,7 @@ class TestRetryLogic:
             call_count += 1
             if call_count < 3:
                 import asyncpg
+
                 raise asyncpg.PostgresError("connection refused")
             return mock_pool
 
@@ -134,11 +132,10 @@ class TestRetryLogic:
             assert call_count == 2
 
     @pytest.mark.asyncio
-    async def test_all_retries_exhausted_raises_db_connect_error(
-        self, settings: Settings
-    ) -> None:
+    async def test_all_retries_exhausted_raises_db_connect_error(self, settings: Settings) -> None:
         async def mock_create_pool(dsn: str, **kwargs: object) -> MagicMock:
             import asyncpg
+
             raise asyncpg.PostgresError("connection refused")
 
         with patch("asyncpg.create_pool", new=mock_create_pool):
@@ -155,18 +152,19 @@ class TestRetryLogic:
 
         async def mock_create_pool(dsn: str, **kwargs: object) -> MagicMock:
             import asyncpg
-            raise asyncpg.PostgresError("fail")
 
-        original_sleep = asyncio.sleep
+            raise asyncpg.PostgresError("fail")
 
         async def tracking_sleep(delay: float) -> None:
             delays.append(delay)
 
-        with patch("asyncpg.create_pool", new=mock_create_pool):
-            with patch("asyncio.sleep", new=tracking_sleep):
-                mgr = ConnectionPoolManager(settings)
-                with pytest.raises(DbConnectError):
-                    await mgr.get_pool("test_db")
+        with (
+            patch("asyncpg.create_pool", new=mock_create_pool),
+            patch("asyncio.sleep", new=tracking_sleep),
+        ):
+            mgr = ConnectionPoolManager(settings)
+            with pytest.raises(DbConnectError):
+                await mgr.get_pool("test_db")
 
         # Should have increasing delays (with jitter)
         assert len(delays) > 0

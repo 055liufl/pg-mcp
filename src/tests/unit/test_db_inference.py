@@ -31,8 +31,8 @@ class MockSchemaCache:
     def __init__(
         self,
         databases: list[str],
-        schemas: Optional[dict[str, DatabaseSchema]] = None,
-        raise_on_get: Optional[Exception] = None,
+        schemas: dict[str, DatabaseSchema] | None = None,
+        raise_on_get: Exception | None = None,
     ) -> None:
         self._databases = databases
         self._schemas = schemas or {}
@@ -48,7 +48,7 @@ class MockSchemaCache:
             return self._schemas[database]
         raise SchemaNotReadyError(f"Schema for {database} not ready")
 
-    async def refresh(self, database: Optional[str] = None) -> None:
+    async def refresh(self, database: str | None = None) -> None:
         pass
 
 
@@ -73,9 +73,7 @@ class TestSingleHit:
     """Tests for unambiguous single-database matches."""
 
     @pytest.mark.asyncio
-    async def test_infer_single_hit_exact_table_name_returns_db(
-        self, settings: Settings
-    ) -> None:
+    async def test_infer_single_hit_exact_table_name_returns_db(self, settings: Settings) -> None:
         schema = _make_schema(
             "sales_db",
             [
@@ -95,9 +93,7 @@ class TestSingleHit:
         assert result == "sales_db"
 
     @pytest.mark.asyncio
-    async def test_infer_single_hit_column_name_returns_db(
-        self, settings: Settings
-    ) -> None:
+    async def test_infer_single_hit_column_name_returns_db(self, settings: Settings) -> None:
         schema = _make_schema(
             "hr_db",
             [
@@ -120,9 +116,7 @@ class TestSingleHit:
         assert result == "hr_db"
 
     @pytest.mark.asyncio
-    async def test_infer_single_hit_comment_match_returns_db(
-        self, settings: Settings
-    ) -> None:
+    async def test_infer_single_hit_comment_match_returns_db(self, settings: Settings) -> None:
         schema = _make_schema(
             "inventory_db",
             [
@@ -147,9 +141,7 @@ class TestAmbiguous:
     """Tests for ambiguous matches between multiple databases."""
 
     @pytest.mark.asyncio
-    async def test_infer_ambiguous_match_raises_error(
-        self, settings: Settings
-    ) -> None:
+    async def test_infer_ambiguous_match_raises_error(self, settings: Settings) -> None:
         schema_a = _make_schema(
             "db_a",
             [
@@ -170,9 +162,7 @@ class TestAmbiguous:
                 ),
             ],
         )
-        cache = MockSchemaCache(
-            ["db_a", "db_b"], {"db_a": schema_a, "db_b": schema_b}
-        )
+        cache = MockSchemaCache(["db_a", "db_b"], {"db_a": schema_a, "db_b": schema_b})
         inference = DbInference(cache, settings)
         inference.build_summary(schema_a)
         inference.build_summary(schema_b)
@@ -207,9 +197,7 @@ class TestNoMatch:
             await inference.infer("show me all astronauts")
 
     @pytest.mark.asyncio
-    async def test_infer_only_stopwords_raises_no_match(
-        self, settings: Settings
-    ) -> None:
+    async def test_infer_only_stopwords_raises_no_match(self, settings: Settings) -> None:
         cache = MockSchemaCache(["sales_db"])
         inference = DbInference(cache, settings)
 
@@ -217,9 +205,7 @@ class TestNoMatch:
             await inference.infer("the and or")
 
     @pytest.mark.asyncio
-    async def test_infer_empty_query_raises_no_match(
-        self, settings: Settings
-    ) -> None:
+    async def test_infer_empty_query_raises_no_match(self, settings: Settings) -> None:
         cache = MockSchemaCache(["sales_db"])
         inference = DbInference(cache, settings)
 
@@ -252,9 +238,7 @@ class TestCrossDb:
                 ),
             ],
         )
-        cache = MockSchemaCache(
-            ["sales_db", "hr_db"], {"sales_db": schema_a, "hr_db": schema_b}
-        )
+        cache = MockSchemaCache(["sales_db", "hr_db"], {"sales_db": schema_a, "hr_db": schema_b})
         inference = DbInference(cache, settings)
         inference.build_summary(schema_a)
         inference.build_summary(schema_b)
@@ -283,9 +267,7 @@ class TestPartialReady:
                 ),
             ],
         )
-        cache = MockSchemaCache(
-            ["ready_db", "loading_db"], {"ready_db": schema}
-        )
+        cache = MockSchemaCache(["ready_db", "loading_db"], {"ready_db": schema})
         inference = DbInference(cache, settings)
         inference.build_summary(schema)
 
@@ -294,9 +276,7 @@ class TestPartialReady:
         assert result == "ready_db"
 
     @pytest.mark.asyncio
-    async def test_infer_all_not_ready_raises_schema_not_ready(
-        self, settings: Settings
-    ) -> None:
+    async def test_infer_all_not_ready_raises_schema_not_ready(self, settings: Settings) -> None:
         cache = MockSchemaCache(["loading_db"])
         inference = DbInference(cache, settings)
 
@@ -319,9 +299,7 @@ class TestPartialReady:
                 ),
             ],
         )
-        cache = MockSchemaCache(
-            ["sales_db", "loading_db"], {"sales_db": schema}
-        )
+        cache = MockSchemaCache(["sales_db", "loading_db"], {"sales_db": schema})
         inference = DbInference(cache, settings)
         inference.build_summary(schema)
 
@@ -362,9 +340,7 @@ class TestKeywordExtraction:
         assert "users" in keywords
         assert "orders" in keywords
 
-    def test_extract_keywords_expands_chinese_synonyms(
-        self, settings: Settings
-    ) -> None:
+    def test_extract_keywords_expands_chinese_synonyms(self, settings: Settings) -> None:
         # Chinese tokens are not split by the regex tokenizer; the synonym
         # map enriches them with English equivalents that can match the
         # English schema entity names actually present in pg-mcp fixtures.
@@ -379,9 +355,7 @@ class TestKeywordExtraction:
         assert "article" in keywords
         assert "published" in keywords
 
-    def test_extract_keywords_chinese_partial_match_in_long_token(
-        self, settings: Settings
-    ) -> None:
+    def test_extract_keywords_chinese_partial_match_in_long_token(self, settings: Settings) -> None:
         # Even when many Chinese characters fuse into a single token,
         # substring matches in the synonym map should still trigger.
         cache = MockSchemaCache(["db"])
@@ -392,6 +366,7 @@ class TestKeywordExtraction:
         assert "brand" in keywords
         assert "sale" in keywords or "sales" in keywords
         assert "revenue" in keywords
+
 
 class TestSummaryBuilding:
     """Tests for DbSummary construction."""
@@ -444,9 +419,7 @@ class TestOnDemandLoading:
     """Tests for on-demand schema loading during inference."""
 
     @pytest.mark.asyncio
-    async def test_infer_triggers_on_demand_schema_load(
-        self, settings: Settings
-    ) -> None:
+    async def test_infer_triggers_on_demand_schema_load(self, settings: Settings) -> None:
         schema = _make_schema(
             "lazy_db",
             [

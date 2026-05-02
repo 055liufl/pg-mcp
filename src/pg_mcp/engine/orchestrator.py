@@ -73,38 +73,45 @@ def _build_validator_feedback(reason: str) -> str:
     prefix = "Function not in allowlist: "
     if not reason.startswith(prefix):
         return base
-    bad_func = reason[len(prefix):].strip().lower()
+    bad_func = reason[len(prefix) :].strip().lower()
     hint = _FUNCTION_REPLACEMENT_HINTS.get(bad_func)
     if hint is None:
         return (
             f"{base}. The function `{bad_func}` is not available in this "
             f"PostgreSQL database. Use only PostgreSQL standard functions."
         )
-    return (
-        f"{base}. `{bad_func}` does NOT exist in PostgreSQL — replace it "
-        f"with `{hint}`."
-    )
+    return f"{base}. `{bad_func}` does NOT exist in PostgreSQL — replace it with `{hint}`."
 
 
 # PostgreSQL SQLSTATE codes that indicate the LLM referenced a name that
 # doesn't exist in the schema. These are recoverable on retry — feed the
 # error back so the LLM can pick a different column / table / function.
-_RECOVERABLE_PG_SQLSTATES: frozenset[str] = frozenset({
-    "42703",  # undefined_column
-    "42P01",  # undefined_table
-    "42883",  # undefined_function
-    "42704",  # undefined_object
-    "42P02",  # undefined_parameter
-    "42P10",  # invalid_column_reference (e.g. ORDER BY non-existent col)
-})
+_RECOVERABLE_PG_SQLSTATES: frozenset[str] = frozenset(
+    {
+        "42703",  # undefined_column
+        "42P01",  # undefined_table
+        "42883",  # undefined_function
+        "42704",  # undefined_object
+        "42P02",  # undefined_parameter
+        "42P10",  # invalid_column_reference (e.g. ORDER BY non-existent col)
+    }
+)
 
 # Columns that are commonly hallucinated by LLMs when they cannot see the
 # real schema clearly.  Used to enrich retry feedback with concrete
 # alternatives.
-_COMMON_AMOUNT_COLS: frozenset[str] = frozenset({
-    "amount", "total_amount", "sales_amount", "revenue_amount",
-    "gmv", "total_sales", "sales_total", "order_total",
-})
+_COMMON_AMOUNT_COLS: frozenset[str] = frozenset(
+    {
+        "amount",
+        "total_amount",
+        "sales_amount",
+        "revenue_amount",
+        "gmv",
+        "total_sales",
+        "sales_total",
+        "order_total",
+    }
+)
 
 
 def _build_execute_feedback(
@@ -135,18 +142,27 @@ def _build_execute_feedback(
                 if any(
                     kw in cname
                     for kw in (
-                        "amount", "revenue", "total", "net", "gross",
-                        "discount", "tax", "shipping", "cost", "price",
-                        "quantity", "count", "value", "fee", "profit",
+                        "amount",
+                        "revenue",
+                        "total",
+                        "net",
+                        "gross",
+                        "discount",
+                        "tax",
+                        "shipping",
+                        "cost",
+                        "price",
+                        "quantity",
+                        "count",
+                        "value",
+                        "fee",
+                        "profit",
                     )
                 ):
-                    real_cols.append(
-                        f"{table.schema_name}.{table.table_name}.{col.name}"
-                    )
+                    real_cols.append(f"{table.schema_name}.{table.table_name}.{col.name}")
         if real_cols:
-            col_hint = (
-                "Available numeric/amount columns in this database: "
-                + ", ".join(real_cols[:20])
+            col_hint = "Available numeric/amount columns in this database: " + ", ".join(
+                real_cols[:20]
             )
             if len(real_cols) > 20:
                 col_hint += f" (and {len(real_cols) - 20} more)"
@@ -219,7 +235,7 @@ class QueryEngine:
         try:
             await asyncio.wait_for(self._semaphore.acquire(), timeout=0.01)
         except TimeoutError:
-            raise RateLimitedError("服务器繁忙，请稍后重试")
+            raise RateLimitedError("服务器繁忙，请稍后重试") from None
 
         try:
             return await self._do_execute(request, request_id, log)
@@ -289,9 +305,7 @@ class QueryEngine:
 
         for attempt in range(self._settings.max_retries + 1):
             try:
-                gen_result = await self._sql_gen.generate(
-                    request.query, schema_context, feedback
-                )
+                gen_result = await self._sql_gen.generate(request.query, schema_context, feedback)
             except (LlmTimeoutError, LlmError):
                 raise
 
@@ -314,9 +328,7 @@ class QueryEngine:
             )
 
             # 8. SQL validation
-            val_result = self._sql_val.validate(
-                sql, schema, schema_names=schema_names
-            )
+            val_result = self._sql_val.validate(sql, schema, schema_names=schema_names)
             if not val_result.valid:
                 log.warning(
                     "sql_validation_failed",
@@ -383,9 +395,7 @@ class QueryEngine:
             database, sql, exec_result, gen_result
         ):
             validation_used = True
-            verdict = await self._result_val.validate(
-                request.query, sql, exec_result, schema
-            )
+            verdict = await self._result_val.validate(request.query, sql, exec_result, schema)
 
             if verdict.verdict == "fix":
                 # Re-generate and re-execute with validation feedback
@@ -403,18 +413,14 @@ class QueryEngine:
 
                     sql = gen_result.sql
                     sql = self._sql_rewriter.rewrite(sql)
-                    val_result = self._sql_val.validate(
-                        sql, schema, schema_names=schema_names
-                    )
+                    val_result = self._sql_val.validate(sql, schema, schema_names=schema_names)
                     if not val_result.valid:
                         if val_attempt < self._settings.max_retries:
                             val_feedback = (
                                 f"Fix attempt {val_attempt + 1} rejected: {val_result.reason}"
                             )
                             continue
-                        raise SqlUnsafeError(
-                            val_result.reason or "修正后的 SQL 安全检查未通过"
-                        )
+                        raise SqlUnsafeError(val_result.reason or "修正后的 SQL 安全检查未通过")
 
                     is_explain = val_result.is_explain
                     try:
@@ -439,18 +445,12 @@ class QueryEngine:
                                 f"Fix attempt {val_attempt + 1} result feedback: {verdict.reason}"
                             )
                             continue
-                        raise ValidationFailedError(
-                            "多次修正后结果验证仍无法通过"
-                        )
+                        raise ValidationFailedError("多次修正后结果验证仍无法通过")
                     elif verdict.verdict == "fail":
-                        raise ValidationFailedError(
-                            verdict.reason or "结果验证失败"
-                        )
+                        raise ValidationFailedError(verdict.reason or "结果验证失败")
                     break
                 else:
-                    raise ValidationFailedError(
-                        "结果验证修正循环已耗尽所有重试次数"
-                    )
+                    raise ValidationFailedError("结果验证修正循环已耗尽所有重试次数")
 
             elif verdict.verdict == "fail":
                 raise ValidationFailedError(verdict.reason or "结果验证失败")

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import gzip
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -25,7 +25,6 @@ from pg_mcp.config import Settings
 from pg_mcp.models.errors import SchemaNotReadyError
 from pg_mcp.models.schema import ColumnInfo, DatabaseSchema, TableInfo
 from pg_mcp.schema.cache import SchemaCache
-from pg_mcp.schema.state import SchemaState
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +58,7 @@ def sample_schema() -> DatabaseSchema:
                 columns=[ColumnInfo(name="id", type="integer", nullable=False)],
             ),
         ],
-        loaded_at=datetime.now(timezone.utc),
+        loaded_at=datetime.now(UTC),
     )
 
 
@@ -89,9 +88,7 @@ class TestSingleflight:
             await asyncio.sleep(0.1)
             return sample_schema
 
-        with patch.object(
-            cache._discovery, "load_schema", new=slow_load
-        ):
+        with patch.object(cache._discovery, "load_schema", new=slow_load):
             cache.set_discovered_databases(["test_db"])
             # Fire two concurrent requests
             tasks = [
@@ -112,11 +109,10 @@ class TestSingleflight:
         mock_redis: AsyncMock,
         sample_schema: DatabaseSchema,
     ) -> None:
-        compressed = gzip.compress(
-            sample_schema.model_dump_json().encode("utf-8")
-        )
+        compressed = gzip.compress(sample_schema.model_dump_json().encode("utf-8"))
+
         # First call: state=READY, data present
-        async def mock_get(key: str) -> Optional[bytes]:
+        async def mock_get(key: str) -> bytes | None:
             if "state" in key:
                 return "ready"
             if "schema" in key:
@@ -168,9 +164,9 @@ class TestCacheMiss:
         mock_redis: AsyncMock,
         sample_schema: DatabaseSchema,
     ) -> None:
-        states: list[Optional[str]] = [None]
+        states: list[str | None] = [None]
 
-        async def track_state(key: str) -> Optional[bytes]:
+        async def track_state(key: str) -> bytes | None:
             if "state" in key:
                 return states[0].encode() if states[0] else None
             return None
@@ -204,11 +200,10 @@ class TestRefresh:
         mock_redis: AsyncMock,
         sample_schema: DatabaseSchema,
     ) -> None:
-        compressed = gzip.compress(
-            sample_schema.model_dump_json().encode("utf-8")
-        )
+        compressed = gzip.compress(sample_schema.model_dump_json().encode("utf-8"))
+
         # Start with READY state and cached data
-        async def mock_get(key: str) -> Optional[bytes]:
+        async def mock_get(key: str) -> bytes | None:
             if "state" in key:
                 return "ready"
             if "schema" in key:
@@ -223,7 +218,7 @@ class TestRefresh:
         assert result.database == "test_db"
 
         # Now refresh
-        refresh_result = await cache.refresh("test_db")
+        await cache.refresh("test_db")
 
         # State should be reset to UNLOADED and then re-triggered
         assert mock_redis.set.call_count >= 1
@@ -282,7 +277,7 @@ class TestStateMachine:
         mock_redis: AsyncMock,
         sample_schema: DatabaseSchema,
     ) -> None:
-        state_log: list[Optional[str]] = []
+        state_log: list[str] = []
 
         async def track_set(key: str, value: bytes | str, **kwargs: object) -> bool:
             if "state" in key:
@@ -315,7 +310,7 @@ class TestStateMachine:
         cache: SchemaCache,
         mock_redis: AsyncMock,
     ) -> None:
-        state_log: list[Optional[str]] = []
+        state_log: list[str] = []
 
         async def track_set(key: str, value: bytes | str, **kwargs: object) -> bool:
             if "state" in key:
@@ -419,7 +414,7 @@ class TestCompression:
     ) -> None:
         load_count = 0
 
-        async def mock_get(key: str) -> Optional[bytes]:
+        async def mock_get(key: str) -> bytes | None:
             if "state" in key:
                 return b"ready"
             if "schema" in key:
@@ -517,9 +512,7 @@ class TestRedisBytesRegression:
         sample_schema: DatabaseSchema,
     ) -> None:
         """SchemaState lookup must succeed when Redis returns bytes."""
-        compressed = gzip.compress(
-            sample_schema.model_dump_json().encode("utf-8")
-        )
+        compressed = gzip.compress(sample_schema.model_dump_json().encode("utf-8"))
 
         async def mock_get(key: str) -> bytes | None:
             if "state" in key:
@@ -592,13 +585,9 @@ class TestRefreshCompletion:
         # Track state writes so refresh sees the right transitions
         state_store: dict[str, str] = {}
 
-        async def mock_set(
-            key: str, value: bytes | str, **_: object
-        ) -> bool:
+        async def mock_set(key: str, value: bytes | str, **_: object) -> bool:
             if "state" in key:
-                state_store[key] = (
-                    value.decode() if isinstance(value, bytes) else value
-                )
+                state_store[key] = value.decode() if isinstance(value, bytes) else value
             return True
 
         async def mock_get(key: str) -> bytes | None:

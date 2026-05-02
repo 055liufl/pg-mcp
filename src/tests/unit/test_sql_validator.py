@@ -14,7 +14,6 @@ import pytest
 
 from pg_mcp.engine.sql_validator import SqlValidator
 from pg_mcp.models.schema import ColumnInfo, DatabaseSchema, TableInfo
-from pg_mcp.protocols import ValidationResult
 from tests.fixtures.sql_samples import (
     FAIL_CASES,
     FOREIGN_TABLE_CASES,
@@ -84,17 +83,13 @@ class TestPassCases:
 
         assert result.valid is True, f"Case {name} should pass but got: {result.reason}"
 
-    def test_explain_select_sets_is_explain_flag(
-        self, validator: SqlValidator
-    ) -> None:
+    def test_explain_select_sets_is_explain_flag(self, validator: SqlValidator) -> None:
         result = validator.validate("EXPLAIN SELECT * FROM orders")
 
         assert result.valid is True
         assert result.is_explain is True
 
-    def test_explain_verbose_sets_is_explain_flag(
-        self, validator: SqlValidator
-    ) -> None:
+    def test_explain_verbose_sets_is_explain_flag(self, validator: SqlValidator) -> None:
         result = validator.validate("EXPLAIN (VERBOSE, COSTS) SELECT * FROM orders")
 
         assert result.valid is True
@@ -154,9 +149,7 @@ class TestForeignTables:
         validator: SqlValidator,
         schema_with_foreign_table: DatabaseSchema,
     ) -> None:
-        result = validator.validate(
-            "SELECT * FROM public.users", schema_with_foreign_table
-        )
+        result = validator.validate("SELECT * FROM public.users", schema_with_foreign_table)
 
         assert result.valid is True
 
@@ -174,9 +167,7 @@ class TestForeignTables:
                 TableInfo(
                     schema_name="app",
                     table_name="orders",
-                    columns=[
-                        ColumnInfo(name="id", type="integer", nullable=False)
-                    ],
+                    columns=[ColumnInfo(name="id", type="integer", nullable=False)],
                     is_foreign=True,
                 ),
             ],
@@ -198,9 +189,7 @@ class TestForeignTables:
     ) -> None:
         # Without an explicit search_path, the validator falls back to
         # ``public`` and rejects when the table is foreign there.
-        result = validator.validate(
-            "SELECT * FROM foreign_data", schema_with_foreign_table
-        )
+        result = validator.validate("SELECT * FROM foreign_data", schema_with_foreign_table)
 
         assert result.valid is False
         assert "外部表访问被拒绝" in (result.reason or "")
@@ -235,12 +224,8 @@ class TestFunctionWhitelist:
         # CAST(...) and ::type are type-cast expressions, not callable
         # functions. They subclass exp.Func in SQLGlot but are absent from
         # pg_proc-derived allowlists.
-        result_cast = validator.validate(
-            "SELECT CAST(id AS TEXT) FROM users", sample_schema
-        )
-        result_colon = validator.validate(
-            "SELECT id::text FROM users", sample_schema
-        )
+        result_cast = validator.validate("SELECT CAST(id AS TEXT) FROM users", sample_schema)
+        result_colon = validator.validate("SELECT id::text FROM users", sample_schema)
 
         assert result_cast.valid is True
         assert result_colon.valid is True
@@ -249,9 +234,7 @@ class TestFunctionWhitelist:
         self, validator: SqlValidator, sample_schema: DatabaseSchema
     ) -> None:
         # IF(cond, a, b) maps to exp.If — same keyword-expression treatment.
-        result = validator.validate(
-            "SELECT IF(id > 0, 'pos', 'zero') FROM users", sample_schema
-        )
+        result = validator.validate("SELECT IF(id > 0, 'pos', 'zero') FROM users", sample_schema)
 
         assert result.valid is True
 
@@ -317,10 +300,7 @@ class TestFunctionWhitelist:
         # "Function not in allowlist: timestamp_trunc".
         # Add ``date_trunc`` to the schema's allowlist for this test.
         schema_with_date_trunc = sample_schema.model_copy(
-            update={
-                "allowed_functions": sample_schema.allowed_functions
-                | {"date_trunc"}
-            }
+            update={"allowed_functions": sample_schema.allowed_functions | {"date_trunc"}}
         )
         result = validator.validate(
             "SELECT date_trunc('month', created_at) FROM users",
@@ -328,12 +308,11 @@ class TestFunctionWhitelist:
         )
 
         assert result.valid is True
+
     def test_unknown_function_rejected_when_whitelist_set(
         self, validator: SqlValidator, sample_schema: DatabaseSchema
     ) -> None:
-        result = validator.validate(
-            "SELECT UNKNOWN_FUNC(name) FROM users", sample_schema
-        )
+        result = validator.validate("SELECT UNKNOWN_FUNC(name) FROM users", sample_schema)
 
         assert result.valid is False
         assert "函数不在允许列表中" in (result.reason or "")
@@ -341,9 +320,7 @@ class TestFunctionWhitelist:
     def test_blacklisted_function_always_rejected_even_in_whitelist(
         self, validator: SqlValidator, sample_schema: DatabaseSchema
     ) -> None:
-        result = validator.validate(
-            "SELECT pg_sleep(100) FROM users", sample_schema
-        )
+        result = validator.validate("SELECT pg_sleep(100) FROM users", sample_schema)
 
         assert result.valid is False
         assert "不允许的高风险函数" in (result.reason or "")
@@ -381,9 +358,7 @@ class TestEdgeCases:
 
         assert result.valid is True
 
-    def test_multiple_statements_rejected(
-        self, validator: SqlValidator
-    ) -> None:
+    def test_multiple_statements_rejected(self, validator: SqlValidator) -> None:
         result = validator.validate("SELECT 1; SELECT 2")
 
         assert result.valid is False
@@ -395,9 +370,7 @@ class TestEdgeCases:
         assert result.valid is False
         assert "不允许 EXPLAIN ANALYZE" in (result.reason or "")
 
-    def test_nested_dml_in_cte_rejected(
-        self, validator: SqlValidator
-    ) -> None:
+    def test_nested_dml_in_cte_rejected(self, validator: SqlValidator) -> None:
         sql = """
             WITH cte AS (INSERT INTO logs VALUES (1) RETURNING id)
             SELECT * FROM cte
@@ -407,9 +380,7 @@ class TestEdgeCases:
         assert result.valid is False
         assert "不允许的语句类型" in (result.reason or "")
 
-    def test_deny_list_function_case_insensitive(
-        self, validator: SqlValidator
-    ) -> None:
+    def test_deny_list_function_case_insensitive(self, validator: SqlValidator) -> None:
         result = validator.validate("SELECT PG_SLEEP(100)")
 
         assert result.valid is False

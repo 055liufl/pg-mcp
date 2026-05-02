@@ -14,15 +14,12 @@ The mcp package is skipped if not available (requires Python 3.10+).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Optional
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
 
 import pytest
 
 from pg_mcp.config import Settings
 from pg_mcp.engine.orchestrator import QueryEngine
-from pg_mcp.models.errors import DbNotFoundError, SqlUnsafeError
 from pg_mcp.models.request import QueryRequest
 from pg_mcp.models.response import QueryResponse
 from pg_mcp.models.schema import ColumnInfo, DatabaseSchema, TableInfo
@@ -39,33 +36,33 @@ from tests.conftest import (
 
 # Try to import MCP components; skip tests if not available
 try:
-    from mcp import McpError
     from pg_mcp.server import PgMcpServer
+
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
 
 
 def _make_settings(**overrides: object) -> Settings:
-    defaults = dict(
-        pg_user="test",
-        pg_password="test",
-        max_retries=2,
-        max_concurrent_requests=20,
-        enable_validation=False,
-    )
+    defaults = {
+        "pg_user": "test",
+        "pg_password": "test",
+        "max_retries": 2,
+        "max_concurrent_requests": 20,
+        "enable_validation": False,
+    }
     defaults.update(overrides)
     return Settings(**defaults)  # type: ignore[arg-type]
 
 
 def _make_engine(
-    sql_gen: Optional[MockSqlGenerator] = None,
-    sql_val: Optional[MockSqlValidator] = None,
-    sql_exec: Optional[MockSqlExecutor] = None,
-    cache: Optional[MockSchemaCache] = None,
-    db_inf: Optional[MockDbInference] = None,
-    result_val: Optional[MockResultValidator] = None,
-    settings: Optional[Settings] = None,
+    sql_gen: MockSqlGenerator | None = None,
+    sql_val: MockSqlValidator | None = None,
+    sql_exec: MockSqlExecutor | None = None,
+    cache: MockSchemaCache | None = None,
+    db_inf: MockDbInference | None = None,
+    result_val: MockResultValidator | None = None,
+    settings: Settings | None = None,
 ) -> QueryEngine:
     sample_schema = DatabaseSchema(
         database="test_db",
@@ -76,18 +73,16 @@ def _make_engine(
                 columns=[ColumnInfo(name="id", type="integer", nullable=False)],
             ),
         ],
-        loaded_at=datetime.now(timezone.utc),
+        loaded_at=datetime.now(UTC),
     )
     return QueryEngine(
         sql_generator=sql_gen or MockSqlGenerator(sql="SELECT * FROM users"),
         sql_rewriter=MockSqlRewriter(),
         sql_validator=sql_val or MockSqlValidator(valid=True),
-        sql_executor=sql_exec or MockSqlExecutor(
-            columns=["id"], column_types=["integer"], rows=[[1]], row_count=1
-        ),
-        schema_cache=cache or MockSchemaCache(
-            schemas={"test_db": sample_schema}, databases=["test_db"]
-        ),
+        sql_executor=sql_exec
+        or MockSqlExecutor(columns=["id"], column_types=["integer"], rows=[[1]], row_count=1),
+        schema_cache=cache
+        or MockSchemaCache(schemas={"test_db": sample_schema}, databases=["test_db"]),
         db_inference=db_inf or MockDbInference(database="test_db"),
         result_validator=result_val or MockResultValidator(should_validate=False),
         retriever=SchemaRetriever(),
@@ -96,7 +91,7 @@ def _make_engine(
 
 
 @pytest.fixture
-def server() -> "PgMcpServer":
+def server() -> PgMcpServer:
     engine = _make_engine()
     if not MCP_AVAILABLE:
         pytest.skip("mcp package not available (requires Python 3.10+)")
@@ -126,9 +121,7 @@ class TestQueryTool:
     @pytest.mark.asyncio
     async def test_full_flow_sql_only_returns_sql(self) -> None:
         engine = _make_engine()
-        request = QueryRequest(
-            query="List all users", database="test_db", return_type="sql"
-        )
+        request = QueryRequest(query="List all users", database="test_db", return_type="sql")
 
         response = await engine.execute(request)
 
@@ -222,7 +215,7 @@ class TestToolRegistration:
     @pytest.mark.skipif(not MCP_AVAILABLE, reason="mcp package not available")
     def test_tool_schema_has_correct_properties(self) -> None:
         engine = _make_engine()
-        server = PgMcpServer(engine)
+        PgMcpServer(engine)
 
         # Verify the tool input schema structure
         tool_info = {
@@ -247,9 +240,7 @@ class TestAdminAction:
         cache = MockSchemaCache(databases=["test_db"])
         engine = _make_engine(cache=cache)
 
-        request = QueryRequest(
-            query="", database="test_db", admin_action="refresh_schema"
-        )
+        request = QueryRequest(query="", database="test_db", admin_action="refresh_schema")
         response = await engine.execute(request)
 
         assert response.refresh_result is not None
@@ -267,13 +258,11 @@ class TestRequestValidation:
         assert request.return_type == "result"
 
     def test_empty_query_without_admin_raises_error(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             QueryRequest(query="", database="test_db")
 
     def test_admin_action_allows_empty_query(self) -> None:
-        request = QueryRequest(
-            query="", database="test_db", admin_action="refresh_schema"
-        )
+        request = QueryRequest(query="", database="test_db", admin_action="refresh_schema")
 
         assert request.admin_action == "refresh_schema"
 
@@ -386,9 +375,7 @@ class TestServerToolCallback:
         )
 
         result = await handler(request)
-        parsed = QueryResponse.model_validate_json(
-            result.root.content[0].text
-        )
+        parsed = QueryResponse.model_validate_json(result.root.content[0].text)
 
         assert parsed.error is not None
         assert parsed.error.code == "E_DB_NOT_FOUND"
@@ -442,9 +429,7 @@ class TestServerToolCallback:
         server = PgMcpServer(engine)
         handler = server._server.request_handlers[ListToolsRequest]
 
-        result = await handler(
-            ListToolsRequest(method="tools/list", params=None)
-        )
+        result = await handler(ListToolsRequest(method="tools/list", params=None))
 
         tools = result.root.tools
         assert len(tools) == 1

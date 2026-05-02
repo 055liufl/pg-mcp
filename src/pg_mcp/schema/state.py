@@ -6,10 +6,10 @@ for each database in the cache.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class SchemaState(str, Enum):
+class SchemaState(StrEnum):
     """States in the schema loading lifecycle."""
 
     UNLOADED = "unloaded"

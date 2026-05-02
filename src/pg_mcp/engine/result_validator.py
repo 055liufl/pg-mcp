@@ -17,21 +17,25 @@ from pg_mcp.models.errors import LlmError, LlmTimeoutError
 from pg_mcp.models.schema import DatabaseSchema
 from pg_mcp.protocols import ExecutionResult, SqlGenerationResult, ValidationVerdict
 
-VALIDATION_PROMPT = """You are a SQL quality validator. Given a user's question, the generated SQL, and the query result metadata, evaluate whether the SQL correctly answers the question.
-
-Respond with a JSON object in this exact format:
-{
-  "verdict": "pass" | "fix" | "fail",
-  "reason": "explanation of the evaluation",
-  "suggested_sql": "optional corrected SQL if verdict is fix"
-}
-
-Rules:
-- "pass": The SQL correctly answers the user's question.
-- "fix": The SQL is close but has issues that can be corrected; provide suggested_sql.
-- "fail": The SQL is fundamentally wrong or unsafe and cannot be easily fixed.
-
-Be concise. Focus on correctness, not style."""
+VALIDATION_PROMPT = (
+    "You are a SQL quality validator. Given a user's question, "
+    "the generated SQL, and the query result metadata, "
+    "evaluate whether the SQL correctly answers the question.\n"
+    "\n"
+    "Respond with a JSON object in this exact format:\n"
+    "{\n"
+    '  "verdict": "pass" | "fix" | "fail",\n'
+    '  "reason": "explanation of the evaluation",\n'
+    '  "suggested_sql": "optional corrected SQL if verdict is fix"\n'
+    "}\n"
+    "\n"
+    "Rules:\n"
+    '- "pass": The SQL correctly answers the question.\n'
+    '- "fix": The SQL is close but has issues; provide suggested_sql.\n'
+    '- "fail": The SQL is fundamentally wrong or unsafe.\n'
+    "\n"
+    "Be concise. Focus on correctness, not style."
+)
 
 # Simple PII detection patterns
 _EMAIL_RE = re.compile(r"[\w.-]+@[\w.-]+\.\w+")
@@ -39,11 +43,28 @@ _PHONE_RE = re.compile(r"\b1[3-9]\d{9}\b")
 _ID_CARD_RE = re.compile(r"\b\d{17}[\dXx]\b")
 
 # Column names that trigger full-column masking
-_SENSITIVE_COL_NAMES: frozenset[str] = frozenset({
-    "password", "passwd", "pwd", "token", "secret", "ssn", "social_security",
-    "credit_card", "cvv", "pin", "api_key", "apikey", "auth_token",
-    "access_token", "refresh_token", "private_key", "salt", "hash",
-})
+_SENSITIVE_COL_NAMES: frozenset[str] = frozenset(
+    {
+        "password",
+        "passwd",
+        "pwd",
+        "token",
+        "secret",
+        "ssn",
+        "social_security",
+        "credit_card",
+        "cvv",
+        "pin",
+        "api_key",
+        "apikey",
+        "auth_token",
+        "access_token",
+        "refresh_token",
+        "private_key",
+        "salt",
+        "hash",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -94,9 +115,7 @@ class _DenyRule:
         """Return True if this rule applies to ``database`` at all."""
         return self._seg_match(self.database, database)
 
-    def matches_table(
-        self, database: str, schema_name: str, table_name: str
-    ) -> bool:
+    def matches_table(self, database: str, schema_name: str, table_name: str) -> bool:
         """Return True if this rule denies (db, schema, table)."""
         return (
             self._seg_match(self.database, database)
@@ -114,9 +133,8 @@ class _DenyRule:
         """Return True if this rule denies the given column reference."""
         if self.column is None:
             return self.matches_table(database, schema_name, table_name)
-        return (
-            self.matches_table(database, schema_name, table_name)
-            and self._seg_match(self.column, column_name)
+        return self.matches_table(database, schema_name, table_name) and self._seg_match(
+            self.column, column_name
         )
 
 
@@ -129,10 +147,10 @@ def _mask_pii(value: str) -> str:
 
 
 def _mask_row(
-    row: list,
+    row: list[object],
     columns: list[str],
     extra_masked_cols: set[int] | None = None,
-) -> list:
+) -> list[object]:
     """Mask sensitive columns in a result row.
 
     Args:
@@ -142,10 +160,14 @@ def _mask_row(
             replaced with ``"***"`` regardless of column name (used for
             hierarchical deny-list matches).
     """
-    masked: list = []
-    for idx, (val, col) in enumerate(zip(row, columns)):
+    masked: list[object] = []
+    for idx, (val, col) in enumerate(zip(row, columns, strict=False)):
         col_lower = col.lower()
-        if extra_masked_cols and idx in extra_masked_cols or any(s in col_lower for s in _SENSITIVE_COL_NAMES):
+        if (
+            extra_masked_cols
+            and idx in extra_masked_cols
+            or any(s in col_lower for s in _SENSITIVE_COL_NAMES)
+        ):
             masked.append("***")
         elif isinstance(val, str):
             masked.append(_mask_pii(val))
@@ -168,9 +190,7 @@ class ResultValidator:
         self._client = client
         self._settings = settings
         self._model = settings.openai_model
-        self._deny_rules: list[_DenyRule] = self._compile_rules(
-            settings.validation_deny_list_items
-        )
+        self._deny_rules: list[_DenyRule] = self._compile_rules(settings.validation_deny_list_items)
 
     @staticmethod
     def _compile_rules(raw_rules: list[str]) -> list[_DenyRule]:
@@ -224,19 +244,14 @@ class ResultValidator:
             return True
 
         # Low confidence (if logprob available)
-        if (
+        return (
             generation.avg_logprob is not None
             and generation.avg_logprob < self._settings.validation_confidence_threshold
-        ):
-            return True
-
-        return False
+        )
 
     def _rules_for_database(self, database: str) -> list[_DenyRule]:
         """Return deny rules whose database segment matches ``database``."""
-        return [
-            r for r in self._deny_rules if r.matches_database(database)
-        ]
+        return [r for r in self._deny_rules if r.matches_database(database)]
 
     def _is_denied(self, database: str) -> bool:
         """Return True if any rule denies the entire database.
@@ -264,9 +279,7 @@ class ResultValidator:
     ) -> bool:
         """True if any rule denies (db, schema, table) at table-or-above level."""
         return any(
-            r.column is None
-            and r.matches_table(database, schema_name, table_name)
-            for r in rules
+            r.column is None and r.matches_table(database, schema_name, table_name) for r in rules
         )
 
     def _column_denied_indices(
@@ -295,9 +308,7 @@ class ResultValidator:
         for idx, col_name in enumerate(result.columns):
             for schema_name, table_name in candidates:
                 if any(
-                    r.matches_column(
-                        database, schema_name, table_name, col_name
-                    )
+                    r.matches_column(database, schema_name, table_name, col_name)
                     for r in column_rules
                 ):
                     masked.add(idx)
@@ -305,9 +316,7 @@ class ResultValidator:
         return masked
 
     @staticmethod
-    def _resolve_query_tables(
-        sql: str, schema: DatabaseSchema
-    ) -> list[tuple[str, str]]:
+    def _resolve_query_tables(sql: str, schema: DatabaseSchema) -> list[tuple[str, str]]:
         """Best-effort extraction of ``(schema, table)`` pairs from ``sql``.
 
         Falls back to the empty list if the SQL cannot be parsed. Tables
@@ -327,9 +336,7 @@ class ResultValidator:
                 table.schema_name.lower()
             )
         for view in schema.views:
-            name_to_schemas.setdefault(view.view_name.lower(), set()).add(
-                view.schema_name.lower()
-            )
+            name_to_schemas.setdefault(view.view_name.lower(), set()).add(view.schema_name.lower())
 
         results: list[tuple[str, str]] = []
         for tbl in parsed.find_all(exp.Table):
@@ -368,20 +375,12 @@ class ResultValidator:
         #   table that matches the rule.
         coarse_denied = False
         if rules:
-            db_wide = [
-                r
-                for r in rules
-                if r.column is None and r.schema == "*" and r.table == "*"
-            ]
+            db_wide = [r for r in rules if r.column is None and r.schema == "*" and r.table == "*"]
             if db_wide:
                 coarse_denied = True
             else:
-                for schema_name, table_name in self._resolve_query_tables(
-                    sql, schema
-                ):
-                    if self._table_denied(
-                        rules, schema.database, schema_name, table_name
-                    ):
+                for schema_name, table_name in self._resolve_query_tables(sql, schema):
+                    if self._table_denied(rules, schema.database, schema_name, table_name):
                         coarse_denied = True
                         break
 
@@ -400,10 +399,7 @@ class ResultValidator:
             if denied_col_indices:
                 # Mask only the denied columns; keep the rest as-is.
                 sample = [
-                    [
-                        "***" if i in denied_col_indices else val
-                        for i, val in enumerate(row)
-                    ]
+                    ["***" if i in denied_col_indices else val for i, val in enumerate(row)]
                     for row in result.rows[: self._settings.validation_sample_rows]
                 ]
                 parts.append(
@@ -411,17 +407,13 @@ class ResultValidator:
                 )
             else:
                 sample = result.rows[: self._settings.validation_sample_rows]
-                parts.append(
-                    f"Sample rows:\n{json.dumps(sample, ensure_ascii=False)}"
-                )
+                parts.append(f"Sample rows:\n{json.dumps(sample, ensure_ascii=False)}")
         elif policy == ValidationDataPolicy.MASKED and result.rows:
             sample = [
                 _mask_row(row, result.columns, denied_col_indices)
                 for row in result.rows[: self._settings.validation_sample_rows]
             ]
-            parts.append(
-                f"Sample rows (masked):\n{json.dumps(sample, ensure_ascii=False)}"
-            )
+            parts.append(f"Sample rows (masked):\n{json.dumps(sample, ensure_ascii=False)}")
         # metadata_only: do not append sample rows
 
         return "\n\n".join(parts)
@@ -462,10 +454,10 @@ class ResultValidator:
                 ),
                 timeout=self._settings.openai_timeout,
             )
-        except TimeoutError:
-            raise LlmTimeoutError("结果验证 LLM 调用超时")
+        except TimeoutError as e:
+            raise LlmTimeoutError("结果验证 LLM 调用超时") from e
         except openai.APIError as e:
-            raise LlmError(f"结果验证 LLM 调用失败: {e}")
+            raise LlmError(f"结果验证 LLM 调用失败: {e}") from e
 
         content = response.choices[0].message.content or "{}"
         return ValidationVerdict.model_validate_json(content)

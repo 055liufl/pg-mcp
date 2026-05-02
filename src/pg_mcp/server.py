@@ -1,5 +1,7 @@
 """MCP Server layer: tool registration, error translation, and transport runners."""
 
+from typing import Any
+
 from mcp import McpError
 from mcp.server import Server
 from mcp.types import INVALID_PARAMS, ErrorData, TextContent, Tool
@@ -37,24 +39,21 @@ class PgMcpServer:
     def _setup_tools(self) -> None:
         """Register MCP tools and their handlers."""
 
-        @self._server.list_tools()
+        @self._server.list_tools()  # type: ignore[untyped-decorator, no-untyped-call]
         async def list_tools() -> list[Tool]:
             """Return the list of available tools."""
             return [
                 Tool(
                     name="query",
                     description=(
-                        "对 PostgreSQL 数据库执行自然语言查询。"
-                        "返回生成的 SQL 以及可选的查询结果。"
+                        "对 PostgreSQL 数据库执行自然语言查询。返回生成的 SQL 以及可选的查询结果。"
                     ),
                     inputSchema={
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": (
-                                    "自然语言查询（未设置 admin_action 时必填）"
-                                ),
+                                "description": ("自然语言查询（未设置 admin_action 时必填）"),
                             },
                             "database": {
                                 "type": "string",
@@ -64,8 +63,7 @@ class PgMcpServer:
                                 "type": "string",
                                 "enum": ["sql", "result"],
                                 "description": (
-                                    "'sql' 仅返回生成的 SQL；"
-                                    "'result' 执行并返回结果行"
+                                    "'sql' 仅返回生成的 SQL；'result' 执行并返回结果行"
                                 ),
                             },
                             "admin_action": {
@@ -79,8 +77,8 @@ class PgMcpServer:
                 )
             ]
 
-        @self._server.call_tool()
-        async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+        @self._server.call_tool()  # type: ignore[untyped-decorator]
+        async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             """Handle a tool invocation from the MCP client.
 
             Args:
@@ -95,16 +93,12 @@ class PgMcpServer:
                 McpError: For protocol-level errors (unknown tool, invalid params).
             """
             if name != "query":
-                raise McpError(
-                    ErrorData(code=INVALID_PARAMS, message=f"未知工具: {name}")
-                )
+                raise McpError(ErrorData(code=INVALID_PARAMS, message=f"未知工具: {name}"))
 
             try:
                 request = QueryRequest(**arguments)
             except ValidationError as exc:
-                raise McpError(
-                    ErrorData(code=INVALID_PARAMS, message=str(exc))
-                ) from exc
+                raise McpError(ErrorData(code=INVALID_PARAMS, message=str(exc))) from exc
 
             try:
                 response = await self._engine.execute(request)

@@ -10,40 +10,61 @@ PASS_CASES: list[tuple[str, str]] = [
     ("select_star", "SELECT * FROM users WHERE id = 1"),
     ("select_where", "SELECT name, email FROM users WHERE active = true"),
     ("cte_simple", "WITH cte AS (SELECT id FROM users) SELECT * FROM cte"),
-    ("cte_multiple", """
+    (
+        "cte_multiple",
+        """
         WITH
             cte1 AS (SELECT id FROM users),
             cte2 AS (SELECT user_id FROM orders)
         SELECT * FROM cte1 JOIN cte2 ON cte1.id = cte2.user_id
-    """),
-    ("aggregate_group_by", """
+    """,
+    ),
+    (
+        "aggregate_group_by",
+        """
         SELECT COUNT(*), department FROM employees GROUP BY department
-    """),
-    ("join_query", """
+    """,
+    ),
+    (
+        "join_query",
+        """
         SELECT u.name, o.total
         FROM users u
         JOIN orders o ON u.id = o.user_id
-    """),
-    ("left_join", """
+    """,
+    ),
+    (
+        "left_join",
+        """
         SELECT u.name, o.total
         FROM users u
         LEFT JOIN orders o ON u.id = o.user_id
-    """),
-    ("subquery", """
+    """,
+    ),
+    (
+        "subquery",
+        """
         SELECT * FROM (SELECT id FROM users WHERE active = true) AS active_users
-    """),
-    ("union_query", """
+    """,
+    ),
+    (
+        "union_query",
+        """
         SELECT id FROM users WHERE active = true
         UNION
         SELECT id FROM archived_users
-    """),
+    """,
+    ),
     ("explain_select", "EXPLAIN SELECT * FROM orders"),
     ("explain_verbose", "EXPLAIN (VERBOSE, COSTS) SELECT * FROM orders"),
-    ("window_function", """
+    (
+        "window_function",
+        """
         SELECT name,
                ROW_NUMBER() OVER (PARTITION BY department ORDER BY salary DESC)
         FROM employees
-    """),
+    """,
+    ),
     ("select_from_values", "SELECT * FROM (VALUES (1, 'a'), (2, 'b')) AS t(id, name)"),
     ("distinct_select", "SELECT DISTINCT department FROM employees"),
     ("order_by_limit", "SELECT * FROM users ORDER BY created_at DESC LIMIT 10"),
@@ -51,21 +72,30 @@ PASS_CASES: list[tuple[str, str]] = [
     ("safe_function_count", "SELECT COUNT(*) FROM orders"),
     ("safe_function_coalesce", "SELECT COALESCE(name, 'Unknown') FROM users"),
     ("safe_function_date_trunc", "SELECT DATE_TRUNC('month', created_at) FROM orders"),
-    ("intersect_query", """
+    (
+        "intersect_query",
+        """
         SELECT id FROM users
         INTERSECT
         SELECT user_id FROM orders
-    """),
-    ("except_query", """
+    """,
+    ),
+    (
+        "except_query",
+        """
         SELECT id FROM users
         EXCEPT
         SELECT user_id FROM deleted_accounts
-    """),
-    ("case_expression", """
+    """,
+    ),
+    (
+        "case_expression",
+        """
         SELECT name,
                CASE WHEN age >= 18 THEN 'adult' ELSE 'minor' END AS category
         FROM users
-    """),
+    """,
+    ),
 ]
 
 # =============================================================================
@@ -80,27 +110,22 @@ FAIL_CASES: list[tuple[str, str, str]] = [
     ("delete", "DELETE FROM users", "E_SQL_UNSAFE"),
     ("delete_where", "DELETE FROM users WHERE id = 1", "E_SQL_UNSAFE"),
     ("truncate", "TRUNCATE TABLE users", "E_SQL_UNSAFE"),
-
     # DDL statements
     ("drop_table", "DROP TABLE users", "E_SQL_UNSAFE"),
     ("drop_index", "DROP INDEX idx_users", "E_SQL_UNSAFE"),
     ("create_table", "CREATE TABLE temp (id INT)", "E_SQL_UNSAFE"),
     ("alter_table", "ALTER TABLE users ADD COLUMN age INT", "E_SQL_UNSAFE"),
     ("create_index", "CREATE INDEX idx ON users(name)", "E_SQL_UNSAFE"),
-
     # Privilege statements
     ("grant", "GRANT SELECT ON users TO readonly", "E_SQL_UNSAFE"),
     ("revoke", "REVOKE SELECT ON users FROM readonly", "E_SQL_UNSAFE"),
-
     # COPY
     ("copy_to", "COPY users TO '/tmp/dump'", "E_SQL_UNSAFE"),
     ("copy_from", "COPY users FROM '/tmp/dump'", "E_SQL_UNSAFE"),
     ("copy_program", "COPY users TO PROGRAM 'cat'", "E_SQL_UNSAFE"),
-
     # Multi-statement
     ("multi_statement", "SELECT 1; DROP TABLE users", "E_SQL_UNSAFE"),
     ("multi_select", "SELECT 1; SELECT 2", "E_SQL_UNSAFE"),
-
     # Blacklisted functions
     ("func_pg_sleep", "SELECT pg_sleep(100)", "E_SQL_UNSAFE"),
     ("func_pg_read_file", "SELECT pg_read_file('/etc/passwd')", "E_SQL_UNSAFE"),
@@ -114,34 +139,42 @@ FAIL_CASES: list[tuple[str, str, str]] = [
     ("func_pg_notify", "SELECT pg_notify('channel', 'payload')", "E_SQL_UNSAFE"),
     ("func_pg_terminate_backend", "SELECT pg_terminate_backend(123)", "E_SQL_UNSAFE"),
     ("func_set_config", "SELECT set_config('search_path', 'public', false)", "E_SQL_UNSAFE"),
-
     # EXPLAIN ANALYZE (executes query)
     ("explain_analyze", "EXPLAIN ANALYZE SELECT * FROM users", "E_SQL_UNSAFE"),
     ("explain_analyze_verbose", "EXPLAIN (ANALYZE, VERBOSE) SELECT * FROM users", "E_SQL_UNSAFE"),
-
     # CALL / stored procedure
     ("call_procedure", "CALL some_procedure()", "E_SQL_UNSAFE"),
-
     # Nested DML inside CTE
-    ("cte_with_insert", """
+    (
+        "cte_with_insert",
+        """
         WITH cte AS (INSERT INTO logs VALUES (1) RETURNING id)
         SELECT * FROM cte
-    """, "E_SQL_UNSAFE"),
-    ("cte_with_update", """
+    """,
+        "E_SQL_UNSAFE",
+    ),
+    (
+        "cte_with_update",
+        """
         WITH cte AS (UPDATE users SET active = false RETURNING id)
         SELECT * FROM cte
-    """, "E_SQL_UNSAFE"),
-    ("cte_with_delete", """
+    """,
+        "E_SQL_UNSAFE",
+    ),
+    (
+        "cte_with_delete",
+        """
         WITH cte AS (DELETE FROM users WHERE id = 1 RETURNING id)
         SELECT * FROM cte
-    """, "E_SQL_UNSAFE"),
+    """,
+        "E_SQL_UNSAFE",
+    ),
     # Multi-statement masquerading as comment-stripped
     ("multi_select_pgsleep", "SELECT 1; SELECT pg_sleep(0)", "E_SQL_UNSAFE"),
     ("multi_select_then_truncate", "SELECT * FROM users; TRUNCATE TABLE audit_log", "E_SQL_UNSAFE"),
     # Additional advisory-lock variants
     ("func_pg_advisory_xact_lock", "SELECT pg_advisory_xact_lock(1)", "E_SQL_UNSAFE"),
     ("func_pg_advisory_unlock", "SELECT pg_advisory_unlock(1)", "E_SQL_UNSAFE"),
-
     # Nested DDL inside subquery (if parser catches it)
     ("select_with_drop", "SELECT * FROM (DROP TABLE users) t", "E_SQL_PARSE"),
 ]

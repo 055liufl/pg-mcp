@@ -89,9 +89,7 @@ class ConnectionPoolManager:
                 jitter = random.uniform(0, delay * 0.1)
                 await asyncio.sleep(delay + jitter)
 
-        raise DbConnectError(
-            f"连接池创建失败（{max_retries} 次重试）: {last_error}"
-        )
+        raise DbConnectError(f"连接池创建失败（{max_retries} 次重试）: {last_error}")
 
     def _build_dsn(self, database: str) -> str:
         """Build a PostgreSQL DSN from settings.
@@ -167,9 +165,7 @@ class ConnectionPoolManager:
 
             if row["rolsuper"] or row["rolcreaterole"] or row["rolcreatedb"]:
                 if self._settings.strict_readonly:
-                    raise RuntimeError(
-                        "STRICT_READONLY: 用户拥有管理权限，拒绝启动"
-                    )
+                    raise RuntimeError("STRICT_READONLY: 用户拥有管理权限，拒绝启动")
                 log.warning(
                     "readonly_check_failed",
                     msg="数据库用户拥有管理权限，强烈建议使用只读用户",
@@ -187,9 +183,7 @@ class ConnectionPoolManager:
             )
             if has_write:
                 if self._settings.strict_readonly:
-                    raise RuntimeError(
-                        "STRICT_READONLY: 用户拥有表写权限，拒绝启动"
-                    )
+                    raise RuntimeError("STRICT_READONLY: 用户拥有表写权限，拒绝启动")
                 log.warning(
                     "readonly_check_failed",
                     msg="用户拥有表写权限，SQL 执行依赖只读事务保护",

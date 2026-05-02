@@ -8,9 +8,7 @@ Covers:
 
 from __future__ import annotations
 
-import json
-from typing import Optional
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,9 +23,9 @@ class _StubCache:
     """Minimal cache double exposing ``refresh`` for the admin endpoint."""
 
     def __init__(self) -> None:
-        self.refresh_calls: list[Optional[str]] = []
+        self.refresh_calls: list[str | None] = []
 
-    async def refresh(self, database: Optional[str] = None) -> RefreshResult:
+    async def refresh(self, database: str | None = None) -> RefreshResult:
         self.refresh_calls.append(database)
         return RefreshResult(
             succeeded=["alpha", "beta"],

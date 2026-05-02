@@ -68,7 +68,7 @@ class SqlRewriter:
         for stmt in statements:
             if stmt is None:
                 continue
-            self._apply_manual_rewrites(stmt)
+            self._apply_manual_rewrites(stmt)  # type: ignore[arg-type]
             rendered.append(stmt.sql(dialect="postgres"))
 
         if not rendered:

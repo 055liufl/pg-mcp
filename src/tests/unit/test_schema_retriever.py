@@ -114,9 +114,7 @@ class TestShouldUseRetrieval:
 
         assert result is True
 
-    def test_threshold_boundary_exact_count(
-        self, small_schema: DatabaseSchema
-    ) -> None:
+    def test_threshold_boundary_exact_count(self, small_schema: DatabaseSchema) -> None:
         retriever = SchemaRetriever(max_tables_for_full=2)
 
         result = retriever.should_use_retrieval(small_schema)
@@ -159,19 +157,13 @@ class TestBuildIndex:
 class TestScoreByIndex:
     """Tests for table scoring against keywords."""
 
-    def test_exact_table_name_match_scores_highest(
-        self, retriever: SchemaRetriever
-    ) -> None:
-        idx = TableIndex(
-            schema_name="public", table_name="users", all_terms=frozenset()
-        )
+    def test_exact_table_name_match_scores_highest(self, retriever: SchemaRetriever) -> None:
+        idx = TableIndex(schema_name="public", table_name="users", all_terms=frozenset())
         score = retriever._score_by_index(idx, {"users"})
 
         assert score == 10.0
 
-    def test_partial_table_name_match_scores_medium(
-        self, retriever: SchemaRetriever
-    ) -> None:
+    def test_partial_table_name_match_scores_medium(self, retriever: SchemaRetriever) -> None:
         idx = TableIndex(
             schema_name="public",
             table_name="user_accounts",
@@ -181,9 +173,7 @@ class TestScoreByIndex:
 
         assert score == 5.0
 
-    def test_column_name_match_scores_low(
-        self, retriever: SchemaRetriever
-    ) -> None:
+    def test_column_name_match_scores_low(self, retriever: SchemaRetriever) -> None:
         idx = TableIndex(
             schema_name="public",
             table_name="users",
@@ -193,9 +183,7 @@ class TestScoreByIndex:
 
         assert score == 3.0
 
-    def test_no_match_scores_zero(
-        self, retriever: SchemaRetriever
-    ) -> None:
+    def test_no_match_scores_zero(self, retriever: SchemaRetriever) -> None:
         idx = TableIndex(
             schema_name="public",
             table_name="users",
@@ -205,9 +193,7 @@ class TestScoreByIndex:
 
         assert score == 0.0
 
-    def test_multiple_keywords_accumulate(
-        self, retriever: SchemaRetriever
-    ) -> None:
+    def test_multiple_keywords_accumulate(self, retriever: SchemaRetriever) -> None:
         idx = TableIndex(
             schema_name="public",
             table_name="users",
@@ -302,9 +288,7 @@ class TestTokenize:
         # English stopwords should not affect CJK tokens.
         assert "年总销售额" not in {"the", "is"}
 
-    def test_extract_keywords_enriches_cjk_synonyms(
-        self, retriever: SchemaRetriever
-    ) -> None:
+    def test_extract_keywords_enriches_cjk_synonyms(self, retriever: SchemaRetriever) -> None:
         # "总销售额" should expand to English sales/revenue synonyms.
         kws = retriever._extract_keywords("2025 年总销售额")
 

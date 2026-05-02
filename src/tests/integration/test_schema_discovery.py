@@ -12,7 +12,6 @@ Note: These tests mock asyncpg connections to avoid requiring a real PostgreSQL 
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -89,52 +88,52 @@ class TestLoadSchema:
     """Tests for the full schema loading pipeline."""
 
     @pytest.mark.asyncio
-    async def test_load_schema_returns_database_schema(
-        self, discovery: SchemaDiscovery
-    ) -> None:
-        mock_conn = MockConnection({
-            "tables_and_columns": [
-                {
-                    "table_schema": "public",
-                    "table_name": "users",
-                    "column_name": "id",
-                    "data_type": "integer",
-                    "is_nullable": "NO",
-                    "column_default": None,
-                    "ordinal_position": 1,
-                    "column_comment": None,
-                    "table_comment": "User accounts",
-                    "table_type": "BASE TABLE",
-                    "is_foreign": False,
-                },
-                {
-                    "table_schema": "public",
-                    "table_name": "users",
-                    "column_name": "name",
-                    "data_type": "text",
-                    "is_nullable": "NO",
-                    "column_default": None,
-                    "ordinal_position": 2,
-                    "column_comment": None,
-                    "table_comment": "User accounts",
-                    "table_type": "BASE TABLE",
-                    "is_foreign": False,
-                },
-            ],
-            "primary_keys": [
-                {"table_schema": "public", "table_name": "users", "column_name": "id"},
-            ],
-            "indexes": [],
-            "foreign_keys": [],
-            "constraints": [],
-            "enum_types": [],
-            "composite_types": [],
-            "views": [],
-            "allowed_functions": [
-                {"proname": "upper"},
-                {"proname": "lower"},
-            ],
-        })
+    async def test_load_schema_returns_database_schema(self, discovery: SchemaDiscovery) -> None:
+        mock_conn = MockConnection(
+            {
+                "tables_and_columns": [
+                    {
+                        "table_schema": "public",
+                        "table_name": "users",
+                        "column_name": "id",
+                        "data_type": "integer",
+                        "is_nullable": "NO",
+                        "column_default": None,
+                        "ordinal_position": 1,
+                        "column_comment": None,
+                        "table_comment": "User accounts",
+                        "table_type": "BASE TABLE",
+                        "is_foreign": False,
+                    },
+                    {
+                        "table_schema": "public",
+                        "table_name": "users",
+                        "column_name": "name",
+                        "data_type": "text",
+                        "is_nullable": "NO",
+                        "column_default": None,
+                        "ordinal_position": 2,
+                        "column_comment": None,
+                        "table_comment": "User accounts",
+                        "table_type": "BASE TABLE",
+                        "is_foreign": False,
+                    },
+                ],
+                "primary_keys": [
+                    {"table_schema": "public", "table_name": "users", "column_name": "id"},
+                ],
+                "indexes": [],
+                "foreign_keys": [],
+                "constraints": [],
+                "enum_types": [],
+                "composite_types": [],
+                "views": [],
+                "allowed_functions": [
+                    {"proname": "upper"},
+                    {"proname": "lower"},
+                ],
+            }
+        )
         mock_pool = MagicMock()
         mock_acquire_cm = AsyncMock()
         mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -155,59 +154,59 @@ class TestLoadSchema:
             assert schema.tables[0].columns[1].is_primary_key is False
 
     @pytest.mark.asyncio
-    async def test_load_schema_with_foreign_keys(
-        self, discovery: SchemaDiscovery
-    ) -> None:
-        mock_conn = MockConnection({
-            "tables_and_columns": [
-                {
-                    "table_schema": "public",
-                    "table_name": "orders",
-                    "column_name": "id",
-                    "data_type": "integer",
-                    "is_nullable": "NO",
-                    "column_default": None,
-                    "ordinal_position": 1,
-                    "column_comment": None,
-                    "table_comment": None,
-                    "table_type": "BASE TABLE",
-                    "is_foreign": False,
-                },
-                {
-                    "table_schema": "public",
-                    "table_name": "orders",
-                    "column_name": "user_id",
-                    "data_type": "integer",
-                    "is_nullable": "NO",
-                    "column_default": None,
-                    "ordinal_position": 2,
-                    "column_comment": None,
-                    "table_comment": None,
-                    "table_type": "BASE TABLE",
-                    "is_foreign": False,
-                },
-            ],
-            "primary_keys": [
-                {"table_schema": "public", "table_name": "orders", "column_name": "id"},
-            ],
-            "indexes": [],
-            "foreign_keys": [
-                {
-                    "constraint_name": "fk_orders_user_id",
-                    "source_schema": "public",
-                    "source_table": "orders",
-                    "source_column": "user_id",
-                    "target_schema": "public",
-                    "target_table": "users",
-                    "target_column": "id",
-                },
-            ],
-            "constraints": [],
-            "enum_types": [],
-            "composite_types": [],
-            "views": [],
-            "allowed_functions": [],
-        })
+    async def test_load_schema_with_foreign_keys(self, discovery: SchemaDiscovery) -> None:
+        mock_conn = MockConnection(
+            {
+                "tables_and_columns": [
+                    {
+                        "table_schema": "public",
+                        "table_name": "orders",
+                        "column_name": "id",
+                        "data_type": "integer",
+                        "is_nullable": "NO",
+                        "column_default": None,
+                        "ordinal_position": 1,
+                        "column_comment": None,
+                        "table_comment": None,
+                        "table_type": "BASE TABLE",
+                        "is_foreign": False,
+                    },
+                    {
+                        "table_schema": "public",
+                        "table_name": "orders",
+                        "column_name": "user_id",
+                        "data_type": "integer",
+                        "is_nullable": "NO",
+                        "column_default": None,
+                        "ordinal_position": 2,
+                        "column_comment": None,
+                        "table_comment": None,
+                        "table_type": "BASE TABLE",
+                        "is_foreign": False,
+                    },
+                ],
+                "primary_keys": [
+                    {"table_schema": "public", "table_name": "orders", "column_name": "id"},
+                ],
+                "indexes": [],
+                "foreign_keys": [
+                    {
+                        "constraint_name": "fk_orders_user_id",
+                        "source_schema": "public",
+                        "source_table": "orders",
+                        "source_column": "user_id",
+                        "target_schema": "public",
+                        "target_table": "users",
+                        "target_column": "id",
+                    },
+                ],
+                "constraints": [],
+                "enum_types": [],
+                "composite_types": [],
+                "views": [],
+                "allowed_functions": [],
+            }
+        )
         mock_pool = MagicMock()
         mock_acquire_cm = AsyncMock()
         mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -226,40 +225,40 @@ class TestLoadSchema:
             assert fk.target_columns == ["id"]
 
     @pytest.mark.asyncio
-    async def test_load_schema_with_enum_types(
-        self, discovery: SchemaDiscovery
-    ) -> None:
-        mock_conn = MockConnection({
-            "tables_and_columns": [
-                {
-                    "table_schema": "public",
-                    "table_name": "orders",
-                    "column_name": "status",
-                    "data_type": "order_status",
-                    "is_nullable": "NO",
-                    "column_default": None,
-                    "ordinal_position": 1,
-                    "column_comment": None,
-                    "table_comment": None,
-                    "table_type": "BASE TABLE",
-                    "is_foreign": False,
-                },
-            ],
-            "primary_keys": [],
-            "indexes": [],
-            "foreign_keys": [],
-            "constraints": [],
-            "enum_types": [
-                {
-                    "schema_name": "public",
-                    "type_name": "order_status",
-                    "values": ["pending", "processing", "shipped"],
-                },
-            ],
-            "composite_types": [],
-            "views": [],
-            "allowed_functions": [],
-        })
+    async def test_load_schema_with_enum_types(self, discovery: SchemaDiscovery) -> None:
+        mock_conn = MockConnection(
+            {
+                "tables_and_columns": [
+                    {
+                        "table_schema": "public",
+                        "table_name": "orders",
+                        "column_name": "status",
+                        "data_type": "order_status",
+                        "is_nullable": "NO",
+                        "column_default": None,
+                        "ordinal_position": 1,
+                        "column_comment": None,
+                        "table_comment": None,
+                        "table_type": "BASE TABLE",
+                        "is_foreign": False,
+                    },
+                ],
+                "primary_keys": [],
+                "indexes": [],
+                "foreign_keys": [],
+                "constraints": [],
+                "enum_types": [
+                    {
+                        "schema_name": "public",
+                        "type_name": "order_status",
+                        "values": ["pending", "processing", "shipped"],
+                    },
+                ],
+                "composite_types": [],
+                "views": [],
+                "allowed_functions": [],
+            }
+        )
         mock_pool = MagicMock()
         mock_acquire_cm = AsyncMock()
         mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -276,27 +275,27 @@ class TestLoadSchema:
             assert schema.enum_types[0].values == ["pending", "processing", "shipped"]
 
     @pytest.mark.asyncio
-    async def test_load_schema_with_views(
-        self, discovery: SchemaDiscovery
-    ) -> None:
-        mock_conn = MockConnection({
-            "tables_and_columns": [],
-            "primary_keys": [],
-            "indexes": [],
-            "foreign_keys": [],
-            "constraints": [],
-            "enum_types": [],
-            "composite_types": [],
-            "views": [
-                {
-                    "schema_name": "public",
-                    "view_name": "active_users",
-                    "definition": "SELECT id, name FROM users WHERE active = true",
-                    "is_materialized": False,
-                },
-            ],
-            "allowed_functions": [],
-        })
+    async def test_load_schema_with_views(self, discovery: SchemaDiscovery) -> None:
+        mock_conn = MockConnection(
+            {
+                "tables_and_columns": [],
+                "primary_keys": [],
+                "indexes": [],
+                "foreign_keys": [],
+                "constraints": [],
+                "enum_types": [],
+                "composite_types": [],
+                "views": [
+                    {
+                        "schema_name": "public",
+                        "view_name": "active_users",
+                        "definition": "SELECT id, name FROM users WHERE active = true",
+                        "is_materialized": False,
+                    },
+                ],
+                "allowed_functions": [],
+            }
+        )
         mock_pool = MagicMock()
         mock_acquire_cm = AsyncMock()
         mock_acquire_cm.__aenter__ = AsyncMock(return_value=mock_conn)

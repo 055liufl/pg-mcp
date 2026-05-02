@@ -11,7 +11,7 @@ Covers:
 from __future__ import annotations
 
 import os
-from typing import Optional, Generator
+from collections.abc import Generator
 
 import pytest
 from pydantic import ValidationError
@@ -33,7 +33,7 @@ def clear_env_vars() -> Generator[None, None, None]:
         "PG_PORT",
         "LOG_LEVEL",
     ]
-    original: dict[str, Optional[str]] = {}
+    original: dict[str, str | None] = {}
     for key in keys:
         original[key] = os.environ.get(key)
         os.environ.pop(key, None)
@@ -142,9 +142,7 @@ class TestSecretStrMasking:
         assert "secret123" not in repr_str
 
     def test_openai_api_key_masked_in_repr(self) -> None:
-        settings = Settings(
-            pg_user="test", pg_password="test", openai_api_key="sk-secret"
-        )
+        settings = Settings(pg_user="test", pg_password="test", openai_api_key="sk-secret")
 
         repr_str = repr(settings)
         assert "sk-secret" not in repr_str
@@ -164,30 +162,22 @@ class TestCommaListParsing:
         assert settings.pg_databases_list == []
 
     def test_pg_databases_list_single_item(self) -> None:
-        settings = Settings(
-            pg_user="test", pg_password="test", pg_databases="mydb"
-        )
+        settings = Settings(pg_user="test", pg_password="test", pg_databases="mydb")
 
         assert settings.pg_databases_list == ["mydb"]
 
     def test_pg_databases_list_multiple_items(self) -> None:
-        settings = Settings(
-            pg_user="test", pg_password="test", pg_databases="db1,db2,db3"
-        )
+        settings = Settings(pg_user="test", pg_password="test", pg_databases="db1,db2,db3")
 
         assert settings.pg_databases_list == ["db1", "db2", "db3"]
 
     def test_pg_databases_list_trims_whitespace(self) -> None:
-        settings = Settings(
-            pg_user="test", pg_password="test", pg_databases=" db1 , db2 , db3 "
-        )
+        settings = Settings(pg_user="test", pg_password="test", pg_databases=" db1 , db2 , db3 ")
 
         assert settings.pg_databases_list == ["db1", "db2", "db3"]
 
     def test_pg_databases_list_ignores_empty_items(self) -> None:
-        settings = Settings(
-            pg_user="test", pg_password="test", pg_databases="db1,,db3"
-        )
+        settings = Settings(pg_user="test", pg_password="test", pg_databases="db1,,db3")
 
         assert settings.pg_databases_list == ["db1", "db3"]
 
@@ -210,9 +200,7 @@ class TestCommaListParsing:
         assert settings.pg_exclude_databases_list == ["old_db", "backup_db"]
 
     def test_validation_deny_list_empty_when_blank(self) -> None:
-        settings = Settings(
-            pg_user="test", pg_password="test", validation_deny_list=""
-        )
+        settings = Settings(pg_user="test", pg_password="test", validation_deny_list="")
 
         assert settings.validation_deny_list_items == []
 

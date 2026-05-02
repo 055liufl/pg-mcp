@@ -9,7 +9,7 @@ and repr output.
 from __future__ import annotations
 
 import os
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import Field, SecretStr, computed_field, field_validator
@@ -22,7 +22,7 @@ _DEFAULT_ENV_FILE = str(Path(__file__).resolve().parent.parent.parent / ".env")
 _ENV_FILE = os.getenv("PG_MCP_ENV_FILE", _DEFAULT_ENV_FILE)
 
 
-class SslMode(str, Enum):
+class SslMode(StrEnum):
     """PostgreSQL SSL mode enumeration."""
 
     DISABLE = "disable"
@@ -33,7 +33,7 @@ class SslMode(str, Enum):
     VERIFY_FULL = "verify-full"
 
 
-class ValidationDataPolicy(str, Enum):
+class ValidationDataPolicy(StrEnum):
     """Policy controlling how much result data is sent to the validation LLM."""
 
     METADATA_ONLY = "metadata_only"
@@ -122,7 +122,7 @@ class Settings(BaseSettings):
             raise ValueError("pg_password 不能为空")
         return value
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def pg_databases_list(self) -> list[str]:
         """Parse *pg_databases* into a list of trimmed database names."""
@@ -130,24 +130,16 @@ class Settings(BaseSettings):
             return []
         return [item.strip() for item in self.pg_databases.split(",") if item.strip()]
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def pg_exclude_databases_list(self) -> list[str]:
         """Parse *pg_exclude_databases* into a list of trimmed database names."""
-        return [
-            item.strip()
-            for item in self.pg_exclude_databases.split(",")
-            if item.strip()
-        ]
+        return [item.strip() for item in self.pg_exclude_databases.split(",") if item.strip()]
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def validation_deny_list_items(self) -> list[str]:
         """Parse *validation_deny_list* into a list of trimmed rules."""
         if not self.validation_deny_list:
             return []
-        return [
-            item.strip()
-            for item in self.validation_deny_list.split(",")
-            if item.strip()
-        ]
+        return [item.strip() for item in self.validation_deny_list.split(",") if item.strip()]

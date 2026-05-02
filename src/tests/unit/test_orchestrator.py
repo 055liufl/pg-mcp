@@ -13,9 +13,7 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from datetime import UTC, datetime
 
 import pytest
 
@@ -30,7 +28,7 @@ from pg_mcp.models.errors import (
 from pg_mcp.models.request import QueryRequest
 from pg_mcp.models.response import QueryResponse
 from pg_mcp.models.schema import ColumnInfo, DatabaseSchema, TableInfo
-from pg_mcp.protocols import ExecutionResult, SqlGenerationResult, ValidationResult
+from pg_mcp.schema.retriever import SchemaRetriever
 from tests.conftest import (
     MockDbInference,
     MockResultValidator,
@@ -40,17 +38,16 @@ from tests.conftest import (
     MockSqlRewriter,
     MockSqlValidator,
 )
-from pg_mcp.schema.retriever import SchemaRetriever
 
 
 def _make_settings(**overrides: object) -> Settings:
-    defaults = dict(
-        pg_user="test",
-        pg_password="test",
-        max_retries=2,
-        max_concurrent_requests=20,
-        enable_validation=False,
-    )
+    defaults = {
+        "pg_user": "test",
+        "pg_password": "test",
+        "max_retries": 2,
+        "max_concurrent_requests": 20,
+        "enable_validation": False,
+    }
     defaults.update(overrides)
     return Settings(**defaults)  # type: ignore[arg-type]
 
@@ -62,8 +59,8 @@ def _make_engine(
     cache: MockSchemaCache | None = None,
     db_inf: MockDbInference | None = None,
     result_val: MockResultValidator | None = None,
-    retriever: Optional[SchemaRetriever] = None,
-    settings: Optional[Settings] = None,
+    retriever: SchemaRetriever | None = None,
+    settings: Settings | None = None,
     sql_rewriter: MockSqlRewriter | None = None,
 ) -> QueryEngine:
     sample_schema = DatabaseSchema(
@@ -75,18 +72,16 @@ def _make_engine(
                 columns=[ColumnInfo(name="id", type="integer", nullable=False)],
             ),
         ],
-        loaded_at=datetime.now(timezone.utc),
+        loaded_at=datetime.now(UTC),
     )
     return QueryEngine(
         sql_generator=sql_gen or MockSqlGenerator(sql="SELECT * FROM users"),
         sql_rewriter=sql_rewriter or MockSqlRewriter(),
         sql_validator=sql_val or MockSqlValidator(valid=True),
-        sql_executor=sql_exec or MockSqlExecutor(
-            columns=["id"], column_types=["integer"], rows=[[1]], row_count=1
-        ),
-        schema_cache=cache or MockSchemaCache(
-            schemas={"test_db": sample_schema}, databases=["test_db"]
-        ),
+        sql_executor=sql_exec
+        or MockSqlExecutor(columns=["id"], column_types=["integer"], rows=[[1]], row_count=1),
+        schema_cache=cache
+        or MockSchemaCache(schemas={"test_db": sample_schema}, databases=["test_db"]),
         db_inference=db_inf or MockDbInference(database="test_db"),
         result_validator=result_val or MockResultValidator(should_validate=False),
         retriever=retriever or SchemaRetriever(),
@@ -149,9 +144,7 @@ class TestReturnTypeSql:
     async def test_execute_sql_only_returns_sql_without_executing(self) -> None:
         executor = MockSqlExecutor()
         engine = _make_engine(sql_exec=executor)
-        request = QueryRequest(
-            query="List all users", database="test_db", return_type="sql"
-        )
+        request = QueryRequest(query="List all users", database="test_db", return_type="sql")
 
         response = await engine.execute(request)
 
@@ -168,9 +161,7 @@ class TestAdminAction:
     async def test_admin_refresh_schema_returns_refresh_result(self) -> None:
         cache = MockSchemaCache(databases=["test_db"])
         engine = _make_engine(cache=cache)
-        request = QueryRequest(
-            query="", database="test_db", admin_action="refresh_schema"
-        )
+        request = QueryRequest(query="", database="test_db", admin_action="refresh_schema")
 
         response = await engine.execute(request)
 
@@ -184,9 +175,7 @@ class TestValidationRetry:
     @pytest.mark.asyncio
     async def test_validation_failure_triggers_retry(self) -> None:
         # First call fails, second succeeds
-        validator = MockSqlValidator(
-            valid=False, toggle_on_call=True, reason="Mock failure"
-        )
+        validator = MockSqlValidator(valid=False, toggle_on_call=True, reason="Mock failure")
         generator = MockSqlGenerator(sql="SELECT * FROM users")
         engine = _make_engine(sql_val=validator, sql_gen=generator)
         request = QueryRequest(query="List all users", database="test_db")
@@ -219,13 +208,9 @@ class TestExecuteRetry:
         # the orchestrator should retry instead of immediately raising.
         from pg_mcp.models.errors import SqlExecuteError
 
-        err = SqlExecuteError(
-            "column f.sales_amount does not exist", sqlstate="42703"
-        )
+        err = SqlExecuteError("column f.sales_amount does not exist", sqlstate="42703")
         executor = MockSqlExecutor(raise_errors=[err, None])
-        engine = _make_engine(
-            sql_exec=executor, settings=_make_settings(max_retries=2)
-        )
+        engine = _make_engine(sql_exec=executor, settings=_make_settings(max_retries=2))
         request = QueryRequest(query="2025 revenue", database="test_db")
 
         response = await engine.execute(request)
@@ -237,13 +222,9 @@ class TestExecuteRetry:
     async def test_undefined_table_triggers_retry_then_succeeds(self) -> None:
         from pg_mcp.models.errors import SqlExecuteError
 
-        err = SqlExecuteError(
-            'relation "fact.fact_gmv" does not exist', sqlstate="42P01"
-        )
+        err = SqlExecuteError('relation "fact.fact_gmv" does not exist', sqlstate="42P01")
         executor = MockSqlExecutor(raise_errors=[err, None])
-        engine = _make_engine(
-            sql_exec=executor, settings=_make_settings(max_retries=2)
-        )
+        engine = _make_engine(sql_exec=executor, settings=_make_settings(max_retries=2))
         request = QueryRequest(query="rolling GMV", database="test_db")
 
         response = await engine.execute(request)
@@ -258,9 +239,7 @@ class TestExecuteRetry:
 
         err = SqlExecuteError("permission denied for table x", sqlstate="42501")
         executor = MockSqlExecutor(raise_errors=[err, None])
-        engine = _make_engine(
-            sql_exec=executor, settings=_make_settings(max_retries=2)
-        )
+        engine = _make_engine(sql_exec=executor, settings=_make_settings(max_retries=2))
         request = QueryRequest(query="x", database="test_db")
 
         with pytest.raises(SqlExecuteError):
@@ -277,9 +256,7 @@ class TestExecuteRetry:
         err2 = SqlExecuteError("col2 does not exist", sqlstate="42703")
         err3 = SqlExecuteError("col3 does not exist", sqlstate="42703")
         executor = MockSqlExecutor(raise_errors=[err1, err2, err3])
-        engine = _make_engine(
-            sql_exec=executor, settings=_make_settings(max_retries=2)
-        )
+        engine = _make_engine(sql_exec=executor, settings=_make_settings(max_retries=2))
         request = QueryRequest(query="x", database="test_db")
 
         with pytest.raises(SqlExecuteError):
@@ -466,7 +443,7 @@ class TestSchemaRetrieval:
                     columns=[ColumnInfo(name="id", type="integer", nullable=False)],
                 ),
             ],
-            loaded_at=datetime.now(timezone.utc),
+            loaded_at=datetime.now(UTC),
         )
         cache = MockSchemaCache(schemas={"test_db": schema}, databases=["test_db"])
         executor = MockSqlExecutor(
@@ -492,7 +469,7 @@ class TestSchemaRetrieval:
                     columns=[ColumnInfo(name="id", type="integer", nullable=False)],
                 ),
             ],
-            loaded_at=datetime.now(timezone.utc),
+            loaded_at=datetime.now(UTC),
         )
         cache = MockSchemaCache(schemas={"test_db": schema}, databases=["test_db"])
         validator = MockSqlValidator(valid=True)
@@ -516,7 +493,7 @@ class TestSchemaRetrieval:
                     columns=[ColumnInfo(name="id", type="integer", nullable=False)],
                 ),
             ],
-            loaded_at=datetime.now(timezone.utc),
+            loaded_at=datetime.now(UTC),
         )
         cache = MockSchemaCache(schemas={"test_db": schema}, databases=["test_db"])
         generator = MockSqlGenerator(sql="SELECT * FROM users")
@@ -539,9 +516,7 @@ class TestSchemaRetrieval:
             )
             for i in range(60)
         ]
-        schema = DatabaseSchema(
-            database="big_db", tables=tables, loaded_at=datetime.now(timezone.utc)
-        )
+        schema = DatabaseSchema(database="big_db", tables=tables, loaded_at=datetime.now(UTC))
         cache = MockSchemaCache(schemas={"big_db": schema}, databases=["big_db"])
         generator = MockSqlGenerator(sql="SELECT * FROM table_0")
         retriever = SchemaRetriever(max_tables_for_full=50)

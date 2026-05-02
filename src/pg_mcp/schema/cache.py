@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
 from collections.abc import Callable
 from typing import Any
@@ -73,9 +74,7 @@ class SchemaCache:
         """
         self._invalidated_hooks.append(hook)
 
-    def _fire_loaded(
-        self, database: str, schema: DatabaseSchema
-    ) -> None:
+    def _fire_loaded(self, database: str, schema: DatabaseSchema) -> None:
         for hook in self._loaded_hooks:
             try:
                 hook(database, schema)
@@ -126,9 +125,7 @@ class SchemaCache:
         state = await self._get_state(database)
 
         if state == SchemaState.READY:
-            cached = await self._redis.get(
-                f"{self.PREFIX}:schema:{database}"
-            )
+            cached = await self._redis.get(f"{self.PREFIX}:schema:{database}")
             if cached:
                 try:
                     decompressed = gzip.decompress(cached)
@@ -185,9 +182,7 @@ class SchemaCache:
         await self._set_state(database, SchemaState.LOADING)
         try:
             schema = await self._discovery.load_schema(database)
-            compressed = gzip.compress(
-                schema.model_dump_json().encode("utf-8")
-            )
+            compressed = gzip.compress(schema.model_dump_json().encode("utf-8"))
             ex = self._settings.schema_refresh_interval or None
             if ex is not None and ex <= 0:
                 ex = None
@@ -196,9 +191,7 @@ class SchemaCache:
                 compressed,
                 ex=ex,
             )
-            await self._redis.delete(
-                f"{self.PREFIX}:error:{database}"
-            )
+            await self._redis.delete(f"{self.PREFIX}:error:{database}")
             await self._set_state(database, SchemaState.READY)
             self._fire_loaded(database, schema)
             log.info(
@@ -243,10 +236,8 @@ class SchemaCache:
                 old_task = self._inflight.pop(db, None)
             if old_task is not None and not old_task.done():
                 old_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await old_task
-                except asyncio.CancelledError:
-                    pass
 
         # Trigger fresh loads via singleflight, capturing each task
         # so we can deterministically await completion below even if a
@@ -267,13 +258,9 @@ class SchemaCache:
             if state == SchemaState.READY:
                 succeeded.append(db)
             else:
-                err_raw = await self._redis.get(
-                    f"{self.PREFIX}:error:{db}"
-                )
+                err_raw = await self._redis.get(f"{self.PREFIX}:error:{db}")
                 err = (
-                    err_raw.decode("utf-8")
-                    if isinstance(err_raw, bytes)
-                    else err_raw or "unknown"
+                    err_raw.decode("utf-8") if isinstance(err_raw, bytes) else err_raw or "unknown"
                 )
                 failed.append({"database": db, "error": err})
 
@@ -333,13 +320,9 @@ class SchemaCache:
         except ValueError:
             return None
 
-    async def _set_state(
-        self, database: str, state: SchemaState
-    ) -> None:
+    async def _set_state(self, database: str, state: SchemaState) -> None:
         """Persist schema state to Redis."""
-        await self._redis.set(
-            f"{self.PREFIX}:state:{database}", state.value
-        )
+        await self._redis.set(f"{self.PREFIX}:state:{database}", state.value)
 
     async def close(self) -> None:
         """Cancel any in-flight tasks and clean up."""
@@ -356,7 +339,5 @@ class SchemaCache:
 
         if self._refresh_task is not None and not self._refresh_task.done():
             self._refresh_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
-            except asyncio.CancelledError:
-                pass

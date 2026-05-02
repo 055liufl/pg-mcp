@@ -1,4 +1,4 @@
-"""Unit tests for the LLM SQL generator.
+r"""Unit tests for the LLM SQL generator.
 
 Covers the contract described in Impl-Plan §2.4:
 - successful generation returns SqlGenerationResult with cleaned SQL + token usage
@@ -27,13 +27,13 @@ from pg_mcp.protocols import SqlGenerationResult
 
 
 def _make_settings(**overrides: object) -> Settings:
-    base = dict(
-        pg_user="test",
-        pg_password="test",
-        openai_api_key="dummy",
-        openai_model="gpt-test",
-        openai_timeout=5,
-    )
+    base = {
+        "pg_user": "test",
+        "pg_password": "test",
+        "openai_api_key": "dummy",
+        "openai_model": "gpt-test",
+        "openai_timeout": 5,
+    }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
 
@@ -66,10 +66,13 @@ def mock_client() -> AsyncMock:
 # Happy path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_generate_returns_sql_and_token_usage(mock_client: AsyncMock) -> None:
     mock_client.chat.completions.create.return_value = _make_response(
-        "SELECT * FROM users", prompt_tokens=120, completion_tokens=30,
+        "SELECT * FROM users",
+        prompt_tokens=120,
+        completion_tokens=30,
     )
     gen = SqlGenerator(mock_client, _make_settings())
 
@@ -85,6 +88,7 @@ async def test_generate_returns_sql_and_token_usage(mock_client: AsyncMock) -> N
 # ---------------------------------------------------------------------------
 # Markdown stripping
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -112,10 +116,12 @@ async def test_generate_strips_markdown_fences(
 # Error mapping
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_generate_timeout_maps_to_llm_timeout_error(mock_client: AsyncMock) -> None:
     async def slow(*_: Any, **__: Any) -> Any:
         await asyncio.sleep(10)
+
     mock_client.chat.completions.create.side_effect = slow
 
     gen = SqlGenerator(mock_client, _make_settings(openai_timeout=1))
@@ -144,6 +150,7 @@ async def test_generate_api_error_maps_to_llm_error(mock_client: AsyncMock) -> N
 # ---------------------------------------------------------------------------
 # Prompt construction (feedback / schema_context propagation)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_generate_injects_feedback_into_prompt(mock_client: AsyncMock) -> None:
@@ -188,6 +195,7 @@ async def test_generate_uses_configured_model(mock_client: AsyncMock) -> None:
 # Edge cases on response shape
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_generate_handles_null_content(mock_client: AsyncMock) -> None:
     mock_client.chat.completions.create.return_value = _make_response(None)
@@ -200,7 +208,8 @@ async def test_generate_handles_null_content(mock_client: AsyncMock) -> None:
 @pytest.mark.asyncio
 async def test_generate_handles_missing_usage(mock_client: AsyncMock) -> None:
     mock_client.chat.completions.create.return_value = _make_response(
-        "SELECT 1", usage_present=False,
+        "SELECT 1",
+        usage_present=False,
     )
     gen = SqlGenerator(mock_client, _make_settings())
 
@@ -212,6 +221,7 @@ async def test_generate_handles_missing_usage(mock_client: AsyncMock) -> None:
 # ---------------------------------------------------------------------------
 # Prompt template constant: keeps the public contract stable
 # ---------------------------------------------------------------------------
+
 
 def test_prompt_template_contains_required_placeholders() -> None:
     assert "{schema_context}" in SQL_GENERATION_PROMPT

@@ -13,26 +13,150 @@ from pg_mcp.models.schema import (
 
 # Simple stopwords for keyword extraction
 _STOPWORDS: set[str] = {
-    "the", "a", "an", "is", "are", "was", "were", "be", "been",
-    "being", "have", "has", "had", "do", "does", "did", "will",
-    "would", "could", "should", "may", "might", "must", "shall",
-    "can", "need", "dare", "ought", "used", "to", "of", "in",
-    "for", "on", "with", "at", "by", "from", "as", "into",
-    "through", "during", "before", "after", "above", "below",
-    "between", "under", "again", "further", "then", "once",
-    "here", "there", "when", "where", "why", "how", "all",
-    "each", "few", "more", "most", "other", "some", "such",
-    "no", "nor", "not", "only", "own", "same", "so", "than",
-    "too", "very", "just", "and", "but", "if", "or", "because",
-    "until", "while", "what", "which", "who", "whom", "this",
-    "that", "these", "those", "am", "it", "its", "itself",
-    "they", "them", "their", "theirs", "themselves", "you",
-    "your", "yours", "yourself", "yourselves", "he", "him",
-    "his", "himself", "she", "her", "hers", "herself", "we",
-    "us", "our", "ours", "ourselves", "i", "me", "my", "myself",
-    "mine", "s", "t", "don", "doesn", "didn", "wasn",
-    "weren", "won", "wouldn", "couldn", "shouldn", "isn", "aren",
-    "hasn", "haven", "hadn", "needn", "mustn", "shan", "mightn",
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "can",
+    "need",
+    "dare",
+    "ought",
+    "used",
+    "to",
+    "of",
+    "in",
+    "for",
+    "on",
+    "with",
+    "at",
+    "by",
+    "from",
+    "as",
+    "into",
+    "through",
+    "during",
+    "before",
+    "after",
+    "above",
+    "below",
+    "between",
+    "under",
+    "again",
+    "further",
+    "then",
+    "once",
+    "here",
+    "there",
+    "when",
+    "where",
+    "why",
+    "how",
+    "all",
+    "each",
+    "few",
+    "more",
+    "most",
+    "other",
+    "some",
+    "such",
+    "no",
+    "nor",
+    "not",
+    "only",
+    "own",
+    "same",
+    "so",
+    "than",
+    "too",
+    "very",
+    "just",
+    "and",
+    "but",
+    "if",
+    "or",
+    "because",
+    "until",
+    "while",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "this",
+    "that",
+    "these",
+    "those",
+    "am",
+    "it",
+    "its",
+    "itself",
+    "they",
+    "them",
+    "their",
+    "theirs",
+    "themselves",
+    "you",
+    "your",
+    "yours",
+    "yourself",
+    "yourselves",
+    "he",
+    "him",
+    "his",
+    "himself",
+    "she",
+    "her",
+    "hers",
+    "herself",
+    "we",
+    "us",
+    "our",
+    "ours",
+    "ourselves",
+    "i",
+    "me",
+    "my",
+    "myself",
+    "mine",
+    "s",
+    "t",
+    "don",
+    "doesn",
+    "didn",
+    "wasn",
+    "weren",
+    "won",
+    "wouldn",
+    "couldn",
+    "shouldn",
+    "isn",
+    "aren",
+    "hasn",
+    "haven",
+    "hadn",
+    "needn",
+    "mustn",
+    "shan",
+    "mightn",
 }
 
 
@@ -210,16 +334,14 @@ class SchemaRetriever:
         # Prefer the precomputed per-database index; fall back to building
         # on demand for callers that did not install one.
         cached_indices = self._indices_by_db.get(schema.database)
-        if cached_indices is not None and len(cached_indices) == len(
-            schema.tables
-        ):
+        if cached_indices is not None and len(cached_indices) == len(schema.tables):
             indices: list[TableIndex] = cached_indices
         else:
             indices = self.build_index(schema)
 
         # Score tables using precomputed index
         scored_tables: list[tuple[TableInfo, float]] = []
-        for table, idx in zip(schema.tables, indices):
+        for table, idx in zip(schema.tables, indices, strict=True):
             score = self._score_by_index(idx, keywords)
             scored_tables.append((table, score))
 
@@ -237,7 +359,7 @@ class SchemaRetriever:
             top_tables = [t for t, _ in scored_tables[:top_n]]
         elif len(top_tables) < 5:
             # Low-confidence match — expand window to give LLM more context.
-            extra = [t for t, s in scored_tables[top_n:top_n * 2] if s > 0]
+            extra = [t for t, s in scored_tables[top_n : top_n * 2] if s > 0]
             top_tables.extend(extra)
 
         # Include related foreign keys
@@ -284,15 +406,9 @@ class SchemaRetriever:
         # CJK Unified Ideographs Extension A)
         cjk_tokens = set(re.findall(r"[\u4e00-\u9fff]+", lowered))
         tokens = en_tokens | cjk_tokens
-        return {
-            t
-            for t in tokens
-            if t not in _STOPWORDS and len(t) >= 2
-        }
+        return {t for t in tokens if t not in _STOPWORDS and len(t) >= 2}
 
-    def _score_by_index(
-        self, index: TableIndex, keywords: TokenSet
-    ) -> float:
+    def _score_by_index(self, index: TableIndex, keywords: TokenSet) -> float:
         """Score a table index against query keywords.
 
         Scoring:
@@ -332,9 +448,7 @@ class SchemaRetriever:
         Includes FKs where either the source or target table is in
         the selected table set.
         """
-        table_ids = {
-            f"{t.schema_name}.{t.table_name}" for t in tables
-        }
+        table_ids = {f"{t.schema_name}.{t.table_name}" for t in tables}
         related: list[ForeignKeyInfo] = []
         for fk in schema.foreign_keys:
             source_id = f"{fk.source_schema}.{fk.source_table}"
@@ -360,18 +474,14 @@ class SchemaRetriever:
         lines.append("")
 
         for table in tables:
-            lines.append(
-                f"TABLE {table.schema_name}.{table.table_name}"
-            )
+            lines.append(f"TABLE {table.schema_name}.{table.table_name}")
             if table.comment:
                 lines.append(f"  COMMENT: {table.comment}")
             for col in table.columns:
                 pk_marker = " [PK]" if col.is_primary_key else ""
                 null_marker = "" if col.nullable else " NOT NULL"
                 default_str = f" DEFAULT {col.default}" if col.default else ""
-                lines.append(
-                    f"  {col.name} {col.type}{null_marker}{default_str}{pk_marker}"
-                )
+                lines.append(f"  {col.name} {col.type}{null_marker}{default_str}{pk_marker}")
                 if col.comment:
                     lines.append(f"    -- {col.comment}")
             lines.append("")
@@ -400,9 +510,7 @@ class SchemaRetriever:
             for enum in schema.enum_types:
                 if enum.type_name in enum_types_used:
                     values = ", ".join(f"'{v}'" for v in enum.values)
-                    lines.append(
-                        f"-- {enum.schema_name}.{enum.type_name}: {values}"
-                    )
+                    lines.append(f"-- {enum.schema_name}.{enum.type_name}: {values}")
             lines.append("")
 
         return "\n".join(lines)

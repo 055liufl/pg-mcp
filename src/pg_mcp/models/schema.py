@@ -120,11 +120,7 @@ class DatabaseSchema(BaseModel):
 
     def foreign_table_ids(self) -> set[str]:
         """Return a set of foreign table identifiers in ``schema.table`` form."""
-        return {
-            f"{t.schema_name}.{t.table_name}"
-            for t in self.tables
-            if t.is_foreign
-        }
+        return {f"{t.schema_name}.{t.table_name}" for t in self.tables if t.is_foreign}
 
     def to_prompt_text(self) -> str:
         """Serialize the schema into a plain-text format suitable for LLM prompts.
@@ -154,11 +150,7 @@ class DatabaseSchema(BaseModel):
         # Views
         for view in self.views:
             col_parts = [f"{col.name}: {col.type}" for col in view.columns]
-            view_line = (
-                f"{view.schema_name}.{view.view_name}("
-                + ", ".join(col_parts)
-                + ")"
-            )
+            view_line = f"{view.schema_name}.{view.view_name}(" + ", ".join(col_parts) + ")"
             if view.is_materialized:
                 view_line += " [MATERIALIZED VIEW]"
             else:

@@ -13,6 +13,7 @@ Note: These tests mock asyncpg to avoid requiring a real PostgreSQL instance.
 
 from __future__ import annotations
 
+from datetime import UTC
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -20,11 +21,11 @@ from uuid import UUID
 import pytest
 
 from pg_mcp.config import Settings
-
-pytestmark = pytest.mark.integration
 from pg_mcp.db.pool import ConnectionPoolManager
 from pg_mcp.engine.sql_executor import SqlExecutor, _convert_value, _quote_ident
 from pg_mcp.models.errors import ResultTooLargeError, SqlExecuteError, SqlTimeoutError
+
+pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
@@ -49,7 +50,7 @@ def executor(settings: Settings) -> SqlExecutor:
     return SqlExecutor(pool_mgr, settings)
 
 
-def _make_mock_pool(records: Optional[list[dict]] = None) -> MagicMock:
+def _make_mock_pool(records: list[dict] | None = None) -> MagicMock:
     mock_pool = MagicMock()
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock(return_value="SET")
@@ -123,10 +124,12 @@ class TestExecute:
 
     @pytest.mark.asyncio
     async def test_execute_returns_results(self, executor: SqlExecutor) -> None:
-        mock_pool = _make_mock_pool([
-            {"id": 1, "name": "Alice"},
-            {"id": 2, "name": "Bob"},
-        ])
+        mock_pool = _make_mock_pool(
+            [
+                {"id": 1, "name": "Alice"},
+                {"id": 2, "name": "Bob"},
+            ]
+        )
 
         with patch.object(
             executor._pool_mgr, "get_pool", new_callable=AsyncMock, return_value=mock_pool
@@ -204,9 +207,7 @@ class TestExecute:
             assert "timeout" in str(exc_info.value).lower() or "30" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_execute_postgres_error_raises_sql_execute(
-        self, executor: SqlExecutor
-    ) -> None:
+    async def test_execute_postgres_error_raises_sql_execute(self, executor: SqlExecutor) -> None:
         import asyncpg
 
         mock_pool = MagicMock()
@@ -238,9 +239,7 @@ class TestExecute:
         with patch.object(
             executor._pool_mgr, "get_pool", new_callable=AsyncMock, return_value=mock_pool
         ):
-            await executor.execute(
-                "test_db", "SELECT * FROM users", schema_names=["public", "app"]
-            )
+            await executor.execute("test_db", "SELECT * FROM users", schema_names=["public", "app"])
 
             mock_conn = mock_pool.acquire.return_value.__aenter__.return_value
             execute_calls = [str(call.args[0]) for call in mock_conn.execute.call_args_list]
@@ -249,9 +248,9 @@ class TestExecute:
             # and never bleeds across queries on a recycled connection.
             search_path_calls = [c for c in execute_calls if "search_path" in c]
             assert search_path_calls, "search_path must be configured"
-            assert all(
-                "SET LOCAL" in c for c in search_path_calls
-            ), "search_path must use SET LOCAL"
+            assert all("SET LOCAL" in c for c in search_path_calls), (
+                "search_path must use SET LOCAL"
+            )
             # Identifiers must be quoted to defend against injection.
             assert any('"public"' in c for c in search_path_calls)
             assert any('"app"' in c for c in search_path_calls)
@@ -278,9 +277,7 @@ class TestResultProcessing:
         assert result.row_count == 100
         assert "已限制为 100 行" in (result.truncated_reason or "")
 
-    def test_process_result_truncates_on_soft_size_limit(
-        self, executor: SqlExecutor
-    ) -> None:
+    def test_process_result_truncates_on_soft_size_limit(self, executor: SqlExecutor) -> None:
         # Create rows that exceed max_result_bytes (1024)
         big_value = "x" * 600
         records = [
@@ -325,9 +322,13 @@ class TestResultProcessing:
     def test_process_result_truncates_large_cells(self) -> None:
         from pg_mcp.config import Settings
         from pg_mcp.db.pool import ConnectionPoolManager
+
         settings = Settings(
-            pg_user="test", pg_password="test",
-            max_cell_bytes=10, max_result_bytes=10000, max_result_bytes_hard=50000
+            pg_user="test",
+            pg_password="test",
+            max_cell_bytes=10,
+            max_result_bytes=10000,
+            max_result_bytes_hard=50000,
         )
         executor = SqlExecutor(ConnectionPoolManager(settings), settings)
         big_value = "x" * 100
@@ -380,9 +381,9 @@ class TestConvertValue:
         assert result == {"value": 1.5}
 
     def test_convert_datetime_to_iso(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        dt = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
         result = _convert_value(dt)
 
         assert result == dt.isoformat()

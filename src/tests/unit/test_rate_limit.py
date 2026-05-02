@@ -9,13 +9,15 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 
 import pytest
 
 from pg_mcp.config import Settings
 from pg_mcp.engine.orchestrator import QueryEngine
-from pg_mcp.models.errors import RateLimitedError
+from pg_mcp.models.errors import PgMcpError, RateLimitedError
 from pg_mcp.models.request import QueryRequest
+from pg_mcp.schema.retriever import SchemaRetriever
 from tests.conftest import (
     MockDbInference,
     MockResultValidator,
@@ -25,7 +27,6 @@ from tests.conftest import (
     MockSqlRewriter,
     MockSqlValidator,
 )
-from pg_mcp.schema.retriever import SchemaRetriever
 
 
 def _make_settings(max_concurrent: int = 20) -> Settings:
@@ -36,9 +37,10 @@ def _make_settings(max_concurrent: int = 20) -> Settings:
     )
 
 
-def _make_engine(settings: Optional[Settings] = None) -> QueryEngine:
+def _make_engine(settings: Settings | None = None) -> QueryEngine:
+    from datetime import datetime
+
     from pg_mcp.models.schema import ColumnInfo, DatabaseSchema, TableInfo
-    from datetime import datetime, timezone
 
     s = settings or _make_settings()
     schema = DatabaseSchema(
@@ -50,7 +52,7 @@ def _make_engine(settings: Optional[Settings] = None) -> QueryEngine:
                 columns=[ColumnInfo(name="id", type="integer", nullable=False)],
             ),
         ],
-        loaded_at=datetime.now(timezone.utc),
+        loaded_at=datetime.now(UTC),
     )
     return QueryEngine(
         sql_generator=MockSqlGenerator(sql="SELECT * FROM users"),
@@ -59,9 +61,7 @@ def _make_engine(settings: Optional[Settings] = None) -> QueryEngine:
         sql_executor=MockSqlExecutor(
             columns=["id"], column_types=["integer"], rows=[[1]], row_count=1
         ),
-        schema_cache=MockSchemaCache(
-            schemas={"test_db": schema}, databases=["test_db"]
-        ),
+        schema_cache=MockSchemaCache(schemas={"test_db": schema}, databases=["test_db"]),
         db_inference=MockDbInference(database="test_db"),
         result_validator=MockResultValidator(should_validate=False),
         retriever=SchemaRetriever(),
@@ -114,8 +114,9 @@ class TestSemaphoreBehavior:
 
     @pytest.mark.asyncio
     async def test_semaphore_released_even_on_error(self) -> None:
+        from datetime import datetime
+
         from pg_mcp.models.schema import ColumnInfo, DatabaseSchema, TableInfo
-        from datetime import datetime, timezone
 
         settings = _make_settings(max_concurrent=1)
         schema = DatabaseSchema(
@@ -127,7 +128,7 @@ class TestSemaphoreBehavior:
                     columns=[ColumnInfo(name="id", type="integer", nullable=False)],
                 ),
             ],
-            loaded_at=datetime.now(timezone.utc),
+            loaded_at=datetime.now(UTC),
         )
         # Use a validator that always fails to trigger an error
         validator = MockSqlValidator(valid=False, code="E_SQL_UNSAFE")
@@ -136,9 +137,7 @@ class TestSemaphoreBehavior:
             sql_rewriter=MockSqlRewriter(),
             sql_validator=validator,
             sql_executor=MockSqlExecutor(),
-            schema_cache=MockSchemaCache(
-                schemas={"test_db": schema}, databases=["test_db"]
-            ),
+            schema_cache=MockSchemaCache(schemas={"test_db": schema}, databases=["test_db"]),
             db_inference=MockDbInference(database="test_db"),
             result_validator=MockResultValidator(should_validate=False),
             retriever=SchemaRetriever(),
@@ -146,7 +145,7 @@ class TestSemaphoreBehavior:
         )
         request = QueryRequest(query="List all users", database="test_db")
 
-        with pytest.raises(Exception):
+        with pytest.raises(PgMcpError):
             await engine.execute(request)
 
         # Semaphore should be released even after error

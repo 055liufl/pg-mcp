@@ -8,7 +8,7 @@ easy mocking in unit tests and clean dependency injection.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -38,7 +38,7 @@ class ExecutionResult(BaseModel):
 
     columns: list[str]
     column_types: list[str]
-    rows: list[list]
+    rows: list[list[Any]]
     row_count: int
     truncated: bool = False
     truncated_reason: str | None = None
@@ -62,6 +62,7 @@ class RefreshResult(BaseModel):
 # ---------------------------------------------------------------------------
 # Protocol definitions
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class SqlGeneratorProtocol(Protocol):

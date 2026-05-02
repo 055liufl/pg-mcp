@@ -59,7 +59,7 @@ def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
         async with sse_transport.connect_sse(
             request.scope,
             request.receive,
-            request._send,  # type: ignore[attr-defined]
+            request._send,
         ) as (read_stream, write_stream):
             await server._server.run(
                 read_stream,
@@ -105,6 +105,6 @@ def create_app(server: PgMcpServer, cache: SchemaCache) -> FastAPI:
 
     # Keep cache reference alive on the app instance for potential
     # future admin endpoints (e.g. /admin/refresh).
-    app.state.cache = cache  # type: ignore[attr-defined]
+    app.state.cache = cache
 
     return app

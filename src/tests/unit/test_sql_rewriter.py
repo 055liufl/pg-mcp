@@ -15,22 +15,16 @@ def rewriter() -> SqlRewriter:
 class TestCrossDialectFunctionRewriting:
     """sqlglot's transpile path: BigQuery/MySQL/Snowflake → PostgreSQL."""
 
-    def test_timestamp_trunc_rewritten_to_date_trunc(
-        self, rewriter: SqlRewriter
-    ) -> None:
+    def test_timestamp_trunc_rewritten_to_date_trunc(self, rewriter: SqlRewriter) -> None:
         out = rewriter.rewrite("SELECT timestamp_trunc(ts, MONTH) FROM t")
 
         assert "DATE_TRUNC" in out.upper()
         assert "TIMESTAMP_TRUNC" not in out.upper()
 
-    def test_timestamp_trunc_arg_order_swapped(
-        self, rewriter: SqlRewriter
-    ) -> None:
+    def test_timestamp_trunc_arg_order_swapped(self, rewriter: SqlRewriter) -> None:
         # BigQuery: timestamp_trunc(ts, MONTH)
         # PostgreSQL: date_trunc('MONTH', ts)
-        out = rewriter.rewrite(
-            "SELECT timestamp_trunc(placed_at, MONTH) FROM sales.orders"
-        )
+        out = rewriter.rewrite("SELECT timestamp_trunc(placed_at, MONTH) FROM sales.orders")
 
         # Unit literal should appear before the column reference.
         unit_pos = out.upper().find("'MONTH'")
@@ -44,9 +38,7 @@ class TestCrossDialectFunctionRewriting:
         assert "DATE_TRUNC" in out.upper()
         assert "DATETIME_TRUNC" not in out.upper()
 
-    def test_datetime_trunc_arg_order_swapped(
-        self, rewriter: SqlRewriter
-    ) -> None:
+    def test_datetime_trunc_arg_order_swapped(self, rewriter: SqlRewriter) -> None:
         out = rewriter.rewrite("SELECT datetime_trunc(occurred_at, WEEK) FROM t")
 
         unit_pos = out.upper().find("'WEEK'")
@@ -65,9 +57,7 @@ class TestCrossDialectFunctionRewriting:
         assert "CAST" in out.upper()
         assert "TRY_CAST" not in out.upper()
 
-    def test_date_add_rewritten_to_interval_arithmetic(
-        self, rewriter: SqlRewriter
-    ) -> None:
+    def test_date_add_rewritten_to_interval_arithmetic(self, rewriter: SqlRewriter) -> None:
         out = rewriter.rewrite("SELECT date_add(d, INTERVAL 7 DAY) FROM t")
 
         assert "INTERVAL" in out.upper()
@@ -77,9 +67,7 @@ class TestCrossDialectFunctionRewriting:
 class TestPostgreSQLPassthrough:
     """Already-canonical PostgreSQL must not be broken by the rewriter."""
 
-    def test_date_trunc_unchanged_semantically(
-        self, rewriter: SqlRewriter
-    ) -> None:
+    def test_date_trunc_unchanged_semantically(self, rewriter: SqlRewriter) -> None:
         out = rewriter.rewrite("SELECT date_trunc('month', ts) FROM t")
 
         # Output must still be a valid date_trunc call.
@@ -108,9 +96,7 @@ class TestPostgreSQLPassthrough:
 class TestParseFailureFallback:
     """Returns input unchanged when sqlglot can't parse it."""
 
-    def test_garbage_input_returns_unchanged(
-        self, rewriter: SqlRewriter
-    ) -> None:
+    def test_garbage_input_returns_unchanged(self, rewriter: SqlRewriter) -> None:
         # Use input sqlglot definitively can't parse: unbalanced quotes.
         sql = "SELECT * FROM users WHERE name = 'unterminated"
 
@@ -127,9 +113,7 @@ class TestParseFailureFallback:
 class TestAnonymousFunctionRewrites:
     """Manual rewrites for function names sqlglot doesn't classify."""
 
-    def test_datetime_part_rewritten_to_date_part(
-        self, rewriter: SqlRewriter
-    ) -> None:
+    def test_datetime_part_rewritten_to_date_part(self, rewriter: SqlRewriter) -> None:
         out = rewriter.rewrite("SELECT datetime_part('year', ts) FROM t")
 
         assert "DATE_PART" in out.upper()

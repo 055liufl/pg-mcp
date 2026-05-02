@@ -6,6 +6,7 @@ import base64
 import json
 from datetime import date, datetime, time
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 import asyncpg
@@ -88,13 +89,9 @@ class SqlExecutor:
             idle_timeout_s = self._settings.idle_in_transaction_session_timeout
 
             await conn.execute(f"SET statement_timeout = '{timeout_s}s'")
-            await conn.execute(
-                f"SET idle_in_transaction_session_timeout = '{idle_timeout_s}s'"
-            )
+            await conn.execute(f"SET idle_in_transaction_session_timeout = '{idle_timeout_s}s'")
             await conn.execute(f"SET work_mem = '{self._settings.session_work_mem}'")
-            await conn.execute(
-                f"SET temp_file_limit = '{self._settings.session_temp_file_limit}'"
-            )
+            await conn.execute(f"SET temp_file_limit = '{self._settings.session_temp_file_limit}'")
             await conn.execute("SET max_parallel_workers_per_gather = 2")
 
             limited_sql = self._apply_limit(sql, is_explain)
@@ -102,19 +99,13 @@ class SqlExecutor:
             try:
                 async with conn.transaction(readonly=True):
                     if schema_names:
-                        safe_schemas = ",".join(
-                            _quote_ident(s) for s in schema_names
-                        )
-                        await conn.execute(
-                            f"SET LOCAL search_path = {safe_schemas}"
-                        )
+                        safe_schemas = ",".join(_quote_ident(s) for s in schema_names)
+                        await conn.execute(f"SET LOCAL search_path = {safe_schemas}")
                     rows = await conn.fetch(limited_sql)
-            except asyncpg.QueryCanceledError:
-                raise SqlTimeoutError(f"查询超时 ({timeout_s}s)")
+            except asyncpg.QueryCanceledError as e:
+                raise SqlTimeoutError(f"查询超时 ({timeout_s}s)") from e
             except asyncpg.PostgresError as e:
-                raise SqlExecuteError(
-                    str(e), sqlstate=getattr(e, "sqlstate", None)
-                )
+                raise SqlExecuteError(str(e), sqlstate=getattr(e, "sqlstate", None)) from e
 
         return self._process_result(rows)
 
@@ -151,13 +142,13 @@ class SqlExecutor:
         max_result = self._settings.max_result_bytes
         max_result_hard = self._settings.max_result_bytes_hard
 
-        processed_rows: list[list] = []
+        processed_rows: list[list[Any]] = []
         truncated = False
         truncated_reason: str | None = None
         total_bytes = 0
 
         for record in records:
-            row: list = []
+            row: list[Any] = []
             for col in columns:
                 val = _convert_value(record[col])
                 if isinstance(val, str) and len(val.encode("utf-8")) > max_cell:
@@ -168,9 +159,7 @@ class SqlExecutor:
             total_bytes += row_bytes
 
             if total_bytes > max_result_hard:
-                raise ResultTooLargeError(
-                    f"结果超出硬限制 {max_result_hard} 字节"
-                )
+                raise ResultTooLargeError(f"结果超出硬限制 {max_result_hard} 字节")
 
             if total_bytes > max_result and not truncated:
                 truncated = True

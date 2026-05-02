@@ -11,39 +11,41 @@ from pg_mcp.models.schema import DatabaseSchema
 from pg_mcp.protocols import ValidationResult
 
 # Explicitly denied high-risk functions (rejected even if in pg_proc whitelist)
-DENY_FUNCTIONS: frozenset[str] = frozenset({
-    "pg_read_file",
-    "pg_read_binary_file",
-    "pg_ls_dir",
-    "pg_stat_file",
-    "lo_import",
-    "lo_export",
-    "lo_get",
-    "lo_put",
-    "pg_sleep",
-    "pg_advisory_lock",
-    "pg_advisory_xact_lock",
-    "pg_advisory_unlock",
-    "pg_advisory_unlock_all",
-    "pg_try_advisory_lock",
-    "pg_try_advisory_xact_lock",
-    "pg_notify",
-    "pg_listening_channels",
-    "dblink",
-    "dblink_exec",
-    "dblink_connect",
-    "dblink_disconnect",
-    "dblink_send_query",
-    "dblink_get_result",
-    "pg_terminate_backend",
-    "pg_cancel_backend",
-    "pg_reload_conf",
-    "pg_rotate_logfile",
-    "set_config",
-    "current_setting",
-    "pg_switch_wal",
-    "pg_create_restore_point",
-})
+DENY_FUNCTIONS: frozenset[str] = frozenset(
+    {
+        "pg_read_file",
+        "pg_read_binary_file",
+        "pg_ls_dir",
+        "pg_stat_file",
+        "lo_import",
+        "lo_export",
+        "lo_get",
+        "lo_put",
+        "pg_sleep",
+        "pg_advisory_lock",
+        "pg_advisory_xact_lock",
+        "pg_advisory_unlock",
+        "pg_advisory_unlock_all",
+        "pg_try_advisory_lock",
+        "pg_try_advisory_xact_lock",
+        "pg_notify",
+        "pg_listening_channels",
+        "dblink",
+        "dblink_exec",
+        "dblink_connect",
+        "dblink_disconnect",
+        "dblink_send_query",
+        "dblink_get_result",
+        "pg_terminate_backend",
+        "pg_cancel_backend",
+        "pg_reload_conf",
+        "pg_rotate_logfile",
+        "set_config",
+        "current_setting",
+        "pg_switch_wal",
+        "pg_create_restore_point",
+    }
+)
 
 # AST node types that are unconditionally blocked
 BLOCKED_NODE_TYPES: tuple[type[exp.Expression], ...] = (
@@ -234,14 +236,8 @@ class SqlValidator:
                 effective_search_path: list[str] = (
                     list(schema_names) if schema_names else ["public"]
                 )
-                table_lookup = self._build_table_lookup(
-                    schema, effective_search_path
-                )
-                default_schema = (
-                    effective_search_path[0]
-                    if effective_search_path
-                    else "public"
-                )
+                table_lookup = self._build_table_lookup(schema, effective_search_path)
+                default_schema = effective_search_path[0] if effective_search_path else "public"
                 for table in ast.find_all(exp.Table):
                     table_id = _canonicalize_table_id(
                         table,
@@ -275,9 +271,7 @@ class SqlValidator:
                 table.schema_name.lower()
             )
         for view in schema.views:
-            name_to_schemas.setdefault(view.view_name.lower(), set()).add(
-                view.schema_name.lower()
-            )
+            name_to_schemas.setdefault(view.view_name.lower(), set()).add(view.schema_name.lower())
 
         lookup: dict[str, str] = {}
         for name, schemas in name_to_schemas.items():

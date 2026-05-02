@@ -30,35 +30,37 @@ from pg_mcp.models.schema import (
 log = structlog.get_logger()
 
 # Functions explicitly denied regardless of volatility classification
-_DENY_FUNCTIONS = frozenset({
-    "pg_read_file",
-    "pg_read_binary_file",
-    "pg_ls_dir",
-    "pg_stat_file",
-    "lo_import",
-    "lo_export",
-    "lo_get",
-    "lo_put",
-    "pg_sleep",
-    "pg_advisory_lock",
-    "pg_advisory_xact_lock",
-    "pg_advisory_unlock",
-    "pg_advisory_unlock_all",
-    "pg_try_advisory_lock",
-    "pg_try_advisory_xact_lock",
-    "pg_notify",
-    "pg_listening_channels",
-    "dblink",
-    "dblink_exec",
-    "dblink_connect",
-    "dblink_disconnect",
-    "pg_terminate_backend",
-    "pg_cancel_backend",
-    "pg_reload_conf",
-    "set_config",
-    "pg_switch_wal",
-    "pg_create_restore_point",
-})
+_DENY_FUNCTIONS = frozenset(
+    {
+        "pg_read_file",
+        "pg_read_binary_file",
+        "pg_ls_dir",
+        "pg_stat_file",
+        "lo_import",
+        "lo_export",
+        "lo_get",
+        "lo_put",
+        "pg_sleep",
+        "pg_advisory_lock",
+        "pg_advisory_xact_lock",
+        "pg_advisory_unlock",
+        "pg_advisory_unlock_all",
+        "pg_try_advisory_lock",
+        "pg_try_advisory_xact_lock",
+        "pg_notify",
+        "pg_listening_channels",
+        "dblink",
+        "dblink_exec",
+        "dblink_connect",
+        "dblink_disconnect",
+        "pg_terminate_backend",
+        "pg_cancel_backend",
+        "pg_reload_conf",
+        "set_config",
+        "pg_switch_wal",
+        "pg_create_restore_point",
+    }
+)
 
 
 class SchemaDiscovery:
@@ -110,10 +112,8 @@ class SchemaDiscovery:
             allowed_functions=allowed_functions,
         )
 
-    async def _fetch_tables_and_columns(
-        self, conn: asyncpg.Connection
-    ) -> list[asyncpg.Record]:
-        return await conn.fetch(
+    async def _fetch_tables_and_columns(self, conn: asyncpg.Connection) -> list[asyncpg.Record]:
+        return await conn.fetch(  # type: ignore[no-any-return]
             """
             SELECT
                 c.table_schema,
@@ -146,10 +146,8 @@ class SchemaDiscovery:
             """
         )
 
-    async def _fetch_primary_keys(
-        self, conn: asyncpg.Connection
-    ) -> list[asyncpg.Record]:
-        return await conn.fetch(
+    async def _fetch_primary_keys(self, conn: asyncpg.Connection) -> list[asyncpg.Record]:
+        return await conn.fetch(  # type: ignore[no-any-return]
             """
             SELECT
                 kcu.table_schema,
@@ -162,10 +160,8 @@ class SchemaDiscovery:
             """
         )
 
-    async def _fetch_indexes(
-        self, conn: asyncpg.Connection
-    ) -> list[asyncpg.Record]:
-        return await conn.fetch(
+    async def _fetch_indexes(self, conn: asyncpg.Connection) -> list[asyncpg.Record]:
+        return await conn.fetch(  # type: ignore[no-any-return]
             """
             SELECT
                 schemaname AS schema_name,
@@ -179,10 +175,8 @@ class SchemaDiscovery:
             """
         )
 
-    async def _fetch_foreign_keys(
-        self, conn: asyncpg.Connection
-    ) -> list[asyncpg.Record]:
-        return await conn.fetch(
+    async def _fetch_foreign_keys(self, conn: asyncpg.Connection) -> list[asyncpg.Record]:
+        return await conn.fetch(  # type: ignore[no-any-return]
             """
             SELECT
                 tc.constraint_name,
@@ -203,10 +197,8 @@ class SchemaDiscovery:
             """
         )
 
-    async def _fetch_constraints(
-        self, conn: asyncpg.Connection
-    ) -> list[asyncpg.Record]:
-        return await conn.fetch(
+    async def _fetch_constraints(self, conn: asyncpg.Connection) -> list[asyncpg.Record]:
+        return await conn.fetch(  # type: ignore[no-any-return]
             """
             SELECT
                 tc.table_schema,
@@ -225,10 +217,8 @@ class SchemaDiscovery:
             """
         )
 
-    async def _fetch_enum_types(
-        self, conn: asyncpg.Connection
-    ) -> list[asyncpg.Record]:
-        return await conn.fetch(
+    async def _fetch_enum_types(self, conn: asyncpg.Connection) -> list[asyncpg.Record]:
+        return await conn.fetch(  # type: ignore[no-any-return]
             """
             SELECT
                 n.nspname AS schema_name,
@@ -244,15 +234,13 @@ class SchemaDiscovery:
             """
         )
 
-    async def _fetch_composite_types(
-        self, conn: asyncpg.Connection
-    ) -> list[asyncpg.Record]:
+    async def _fetch_composite_types(self, conn: asyncpg.Connection) -> list[asyncpg.Record]:
         # Standalone composite types created by ``CREATE TYPE x AS (...)``.
         # Filter on ``c.relkind = 'c'`` to exclude row types of tables/views
         # (which also have ``typtype = 'c'`` but are not user-defined
         # standalone composites). Attributes hang off ``t.typrelid``, not
         # ``t.oid`` — joining on the latter never matches.
-        return await conn.fetch(
+        return await conn.fetch(  # type: ignore[no-any-return]
             """
             SELECT
                 n.nspname AS schema_name,
@@ -275,10 +263,8 @@ class SchemaDiscovery:
             """
         )
 
-    async def _fetch_views(
-        self, conn: asyncpg.Connection
-    ) -> list[asyncpg.Record]:
-        return await conn.fetch(
+    async def _fetch_views(self, conn: asyncpg.Connection) -> list[asyncpg.Record]:
+        return await conn.fetch(  # type: ignore[no-any-return]
             """
             SELECT
                 v.table_schema AS schema_name,
@@ -302,9 +288,7 @@ class SchemaDiscovery:
             """
         )
 
-    async def _load_allowed_functions(
-        self, conn: asyncpg.Connection
-    ) -> set[str]:
+    async def _load_allowed_functions(self, conn: asyncpg.Connection) -> set[str]:
         """Load the set of allowed (IMMUTABLE/STABLE) functions from pg_proc.
 
         Excludes functions in the explicit deny-list regardless of their
@@ -338,17 +322,13 @@ class SchemaDiscovery:
         # Build primary key lookup: (schema, table) -> set of column names
         pk_lookup: dict[tuple[str, str], set[str]] = defaultdict(set)
         for row in pks:
-            pk_lookup[(row["table_schema"], row["table_name"])].add(
-                row["column_name"]
-            )
+            pk_lookup[(row["table_schema"], row["table_name"])].add(row["column_name"])
 
         # Group columns by (schema, table) and separate tables from views
-        table_col_groups: dict[
-            tuple[str, str], list[tuple[asyncpg.Record, bool]]
-        ] = defaultdict(list)
-        view_col_groups: dict[
-            tuple[str, str], list[asyncpg.Record]
-        ] = defaultdict(list)
+        table_col_groups: dict[tuple[str, str], list[tuple[asyncpg.Record, bool]]] = defaultdict(
+            list
+        )
+        view_col_groups: dict[tuple[str, str], list[asyncpg.Record]] = defaultdict(list)
         for row in tables_and_cols:
             key = (row["table_schema"], row["table_name"])
             is_pk = row["column_name"] in pk_lookup.get(key, set())
@@ -393,13 +373,13 @@ class SchemaDiscovery:
         index_list: list[IndexInfo] = []
         for row in indexes:
             index_def: str = row["index_def"]
-            columns, index_type, is_unique = self._parse_index_def(index_def)
+            index_cols, index_type, is_unique = self._parse_index_def(index_def)
             index_list.append(
                 IndexInfo(
                     schema_name=row["schema_name"],
                     table_name=row["table_name"],
                     index_name=row["index_name"],
-                    columns=columns,
+                    columns=index_cols,
                     index_type=index_type,
                     is_unique=is_unique,
                 )
@@ -407,9 +387,9 @@ class SchemaDiscovery:
 
         # Build ForeignKeyInfo list
         fk_list: list[ForeignKeyInfo] = []
-        fk_groups: dict[
-            str, dict[str, Any]
-        ] = defaultdict(lambda: {"source_columns": [], "target_columns": []})
+        fk_groups: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"source_columns": [], "target_columns": []}
+        )
         for row in fks:
             key = row["constraint_name"]
             entry = fk_groups[key]
@@ -460,9 +440,7 @@ class SchemaDiscovery:
             )
 
         # Build CompositeTypeInfo list
-        composite_groups: dict[
-            tuple[str, str], list[ColumnInfo]
-        ] = defaultdict(list)
+        composite_groups: dict[tuple[str, str], list[ColumnInfo]] = defaultdict(list)
         for row in composites:
             key = (row["schema_name"], row["type_name"])
             composite_groups[key].append(
@@ -519,9 +497,7 @@ class SchemaDiscovery:
             loaded_at=datetime.now(UTC),
         )
 
-    def _parse_index_def(
-        self, index_def: str
-    ) -> tuple[list[str], str, bool]:
+    def _parse_index_def(self, index_def: str) -> tuple[list[str], str, bool]:
         """Parse index definition string to extract columns, type, and uniqueness.
 
         This is a best-effort parser for common PostgreSQL index definitions.
@@ -548,7 +524,7 @@ class SchemaDiscovery:
         start = index_def.find("(")
         end = index_def.rfind(")")
         if start != -1 and end != -1 and end > start:
-            cols_str = index_def[start + 1:end]
+            cols_str = index_def[start + 1 : end]
             # Split by comma, but be careful with function expressions
             raw_cols = cols_str.split(",")
             for c in raw_cols:
