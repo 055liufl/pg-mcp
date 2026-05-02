@@ -150,7 +150,7 @@ class SqlValidator:
             return ValidationResult(
                 valid=False,
                 code="E_SQL_PARSE",
-                reason=f"SQL syntax error: {e}",
+                reason=f"SQL 语法错误: {e}",
             )
 
         # 2. Single-statement check
@@ -159,7 +159,7 @@ class SqlValidator:
             return ValidationResult(
                 valid=False,
                 code="E_SQL_UNSAFE",
-                reason=f"Only single statements allowed, found {len(stmts)}",
+                reason=f"仅允许单条语句，发现 {len(stmts)} 条",
             )
         ast = stmts[0]
 
@@ -172,20 +172,20 @@ class SqlValidator:
                     return ValidationResult(
                         valid=False,
                         code="E_SQL_UNSAFE",
-                        reason="EXPLAIN ANALYZE is not allowed (executes query)",
+                        reason="不允许 EXPLAIN ANALYZE（会执行查询）",
                     )
                 return ValidationResult(valid=True, is_explain=True)
             return ValidationResult(
                 valid=False,
                 code="E_SQL_UNSAFE",
-                reason=f"Disallowed command: {cmd}",
+                reason=f"不允许的命令: {cmd}",
             )
 
         if not isinstance(ast, _ALLOWED_STATEMENT_TYPES):
             return ValidationResult(
                 valid=False,
                 code="E_SQL_UNSAFE",
-                reason=f"Only SELECT statements allowed, found: {type(ast).__name__}",
+                reason=f"仅允许 SELECT 语句，发现: {type(ast).__name__}",
             )
 
         # 4. Recursive DML/DDL detection in the AST subtree
@@ -194,7 +194,7 @@ class SqlValidator:
                 return ValidationResult(
                     valid=False,
                     code="E_SQL_UNSAFE",
-                    reason=f"Disallowed statement type: {type(node).__name__}",
+                    reason=f"不允许的语句类型: {type(node).__name__}",
                 )
 
         # 5. Function call checks: blacklist + whitelist
@@ -214,7 +214,7 @@ class SqlValidator:
                 return ValidationResult(
                     valid=False,
                     code="E_SQL_UNSAFE",
-                    reason=f"Disallowed high-risk function: {func_name}",
+                    reason=f"不允许的高风险函数: {func_name}",
                 )
 
             # Whitelist check: if schema provides allowed functions, reject unknowns
@@ -222,7 +222,7 @@ class SqlValidator:
                 return ValidationResult(
                     valid=False,
                     code="E_SQL_UNSAFE",
-                    reason=f"Function not in allowlist: {func_name}",
+                    reason=f"函数不在允许列表中: {func_name}",
                 )
 
         # 6. Foreign table check
@@ -252,7 +252,7 @@ class SqlValidator:
                         return ValidationResult(
                             valid=False,
                             code="E_SQL_UNSAFE",
-                            reason=f"Foreign table access denied: {table_id}",
+                            reason=f"外部表访问被拒绝: {table_id}",
                         )
 
         return ValidationResult(valid=True)

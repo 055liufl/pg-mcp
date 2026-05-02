@@ -100,9 +100,9 @@ class SqlGenerator:
                 timeout=self._settings.openai_timeout,
             )
         except TimeoutError:
-            raise LlmTimeoutError("SQL generation LLM call timed out")
+            raise LlmTimeoutError("SQL 生成 LLM 调用超时")
         except openai.APIError as e:
-            raise LlmError(f"SQL generation LLM call failed: {e}")
+            raise LlmError(f"SQL 生成 LLM 调用失败: {e}")
 
         raw_sql = response.choices[0].message.content or ""
         sql = self._clean_sql(raw_sql)

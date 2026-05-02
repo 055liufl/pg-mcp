@@ -44,8 +44,8 @@ class PgMcpServer:
                 Tool(
                     name="query",
                     description=(
-                        "Execute natural language queries against PostgreSQL databases. "
-                        "Returns generated SQL and optionally query results."
+                        "对 PostgreSQL 数据库执行自然语言查询。"
+                        "返回生成的 SQL 以及可选的查询结果。"
                     ),
                     inputSchema={
                         "type": "object",
@@ -53,25 +53,25 @@ class PgMcpServer:
                             "query": {
                                 "type": "string",
                                 "description": (
-                                    "Natural language query (required unless admin_action is set)"
+                                    "自然语言查询（未设置 admin_action 时必填）"
                                 ),
                             },
                             "database": {
                                 "type": "string",
-                                "description": "Target database name",
+                                "description": "目标数据库名称",
                             },
                             "return_type": {
                                 "type": "string",
                                 "enum": ["sql", "result"],
                                 "description": (
-                                    "'sql' returns only the generated SQL; "
-                                    "'result' executes and returns rows"
+                                    "'sql' 仅返回生成的 SQL；"
+                                    "'result' 执行并返回结果行"
                                 ),
                             },
                             "admin_action": {
                                 "type": "string",
                                 "enum": ["refresh_schema"],
-                                "description": "Administrative action to perform",
+                                "description": "要执行的管理操作",
                             },
                         },
                         "required": [],
@@ -96,7 +96,7 @@ class PgMcpServer:
             """
             if name != "query":
                 raise McpError(
-                    ErrorData(code=INVALID_PARAMS, message=f"Unknown tool: {name}")
+                    ErrorData(code=INVALID_PARAMS, message=f"未知工具: {name}")
                 )
 
             try:

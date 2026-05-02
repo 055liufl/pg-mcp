@@ -147,7 +147,7 @@ class TestForeignTables:
 
         assert result.valid is False
         assert result.code == expected_code
-        assert "Foreign table access denied" in (result.reason or "")
+        assert "外部表访问被拒绝" in (result.reason or "")
 
     def test_non_foreign_table_allowed_with_foreign_present(
         self,
@@ -189,7 +189,7 @@ class TestForeignTables:
         )
 
         assert result.valid is False
-        assert "Foreign table access denied" in (result.reason or "")
+        assert "外部表访问被拒绝" in (result.reason or "")
 
     def test_unqualified_table_uses_default_schema_when_no_search_path(
         self,
@@ -203,7 +203,7 @@ class TestForeignTables:
         )
 
         assert result.valid is False
-        assert "Foreign table access denied" in (result.reason or "")
+        assert "外部表访问被拒绝" in (result.reason or "")
 
 
 class TestFunctionWhitelist:
@@ -336,7 +336,7 @@ class TestFunctionWhitelist:
         )
 
         assert result.valid is False
-        assert "Function not in allowlist" in (result.reason or "")
+        assert "函数不在允许列表中" in (result.reason or "")
 
     def test_blacklisted_function_always_rejected_even_in_whitelist(
         self, validator: SqlValidator, sample_schema: DatabaseSchema
@@ -346,7 +346,7 @@ class TestFunctionWhitelist:
         )
 
         assert result.valid is False
-        assert "Disallowed high-risk function" in (result.reason or "")
+        assert "不允许的高风险函数" in (result.reason or "")
 
     def test_no_whitelist_allows_all_non_blacklisted_functions(
         self, validator: SqlValidator
@@ -387,13 +387,13 @@ class TestEdgeCases:
         result = validator.validate("SELECT 1; SELECT 2")
 
         assert result.valid is False
-        assert "Only single statements allowed" in (result.reason or "")
+        assert "仅允许单条语句" in (result.reason or "")
 
     def test_explain_analyze_rejected(self, validator: SqlValidator) -> None:
         result = validator.validate("EXPLAIN ANALYZE SELECT * FROM users")
 
         assert result.valid is False
-        assert "EXPLAIN ANALYZE is not allowed" in (result.reason or "")
+        assert "不允许 EXPLAIN ANALYZE" in (result.reason or "")
 
     def test_nested_dml_in_cte_rejected(
         self, validator: SqlValidator
@@ -405,7 +405,7 @@ class TestEdgeCases:
         result = validator.validate(sql)
 
         assert result.valid is False
-        assert "Disallowed statement type" in (result.reason or "")
+        assert "不允许的语句类型" in (result.reason or "")
 
     def test_deny_list_function_case_insensitive(
         self, validator: SqlValidator

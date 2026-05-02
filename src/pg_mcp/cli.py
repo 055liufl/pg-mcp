@@ -26,13 +26,12 @@ from pg_mcp.server import PgMcpServer
     type=click.Choice(["stdio", "sse"]),
     default="stdio",
     show_default=True,
-    help="MCP transport protocol.",
+    help="MCP 传输协议。",
 )
 def main(transport: str) -> None:
-    """Start the pg-mcp server.
+    """启动 pg-mcp 服务器。
 
-    Supports stdio (default) for Claude Desktop and SSE for HTTP-based
-    MCP clients.
+    支持 stdio（默认，用于 Claude Desktop）和 SSE（用于基于 HTTP 的 MCP 客户端）。
     """
     settings = Settings()
     configure_logging(settings.log_level, settings.log_format)

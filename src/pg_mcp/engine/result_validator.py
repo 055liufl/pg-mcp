@@ -463,9 +463,9 @@ class ResultValidator:
                 timeout=self._settings.openai_timeout,
             )
         except TimeoutError:
-            raise LlmTimeoutError("Result validation LLM call timed out")
+            raise LlmTimeoutError("结果验证 LLM 调用超时")
         except openai.APIError as e:
-            raise LlmError(f"Result validation LLM call failed: {e}")
+            raise LlmError(f"结果验证 LLM 调用失败: {e}")
 
         content = response.choices[0].message.content or "{}"
         return ValidationVerdict.model_validate_json(content)

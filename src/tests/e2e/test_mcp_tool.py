@@ -208,12 +208,12 @@ class TestErrorHandling:
         from pg_mcp.models.response import ErrorDetail
 
         response = QueryResponse(
-            error=ErrorDetail(code="E_DB_NOT_FOUND", message="Database not found: x"),
+            error=ErrorDetail(code="E_DB_NOT_FOUND", message="数据库不存在: x"),
         )
         json_str = response.model_dump_json()
 
         assert "E_DB_NOT_FOUND" in json_str
-        assert "Database not found: x" in json_str
+        assert "数据库不存在: x" in json_str
 
 
 class TestToolRegistration:
@@ -308,7 +308,7 @@ class TestResponseFormat:
         response = QueryResponse(
             error=ErrorDetail(
                 code="E_SQL_UNSAFE",
-                message="Unsafe SQL detected",
+                message="检测到不安全的 SQL",
                 retry_after_ms=None,
             ),
         )
@@ -411,7 +411,7 @@ class TestServerToolCallback:
         # MCP wraps protocol-level errors into a CallToolResult with
         # ``isError=True`` so clients can render them.
         assert result.root.isError is True
-        assert "Unknown tool" in result.root.content[0].text
+        assert "未知工具" in result.root.content[0].text
 
     @pytest.mark.skipif(not MCP_AVAILABLE, reason="mcp package not available")
     @pytest.mark.asyncio

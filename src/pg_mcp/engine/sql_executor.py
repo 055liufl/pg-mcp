@@ -110,7 +110,7 @@ class SqlExecutor:
                         )
                     rows = await conn.fetch(limited_sql)
             except asyncpg.QueryCanceledError:
-                raise SqlTimeoutError(f"Query timed out ({timeout_s}s)")
+                raise SqlTimeoutError(f"查询超时 ({timeout_s}s)")
             except asyncpg.PostgresError as e:
                 raise SqlExecuteError(
                     str(e), sqlstate=getattr(e, "sqlstate", None)
@@ -161,7 +161,7 @@ class SqlExecutor:
             for col in columns:
                 val = _convert_value(record[col])
                 if isinstance(val, str) and len(val.encode("utf-8")) > max_cell:
-                    val = val[:max_cell] + "... [truncated]"
+                    val = val[:max_cell] + "... [已截断]"
                 row.append(val)
 
             row_bytes = len(json.dumps(row, ensure_ascii=False).encode("utf-8"))
@@ -169,12 +169,12 @@ class SqlExecutor:
 
             if total_bytes > max_result_hard:
                 raise ResultTooLargeError(
-                    f"Result exceeds hard limit of {max_result_hard} bytes"
+                    f"结果超出硬限制 {max_result_hard} 字节"
                 )
 
             if total_bytes > max_result and not truncated:
                 truncated = True
-                truncated_reason = f"Result exceeds soft limit of {max_result} bytes"
+                truncated_reason = f"结果超出软限制 {max_result} 字节"
                 # Still include this row; next rows will be skipped
 
             if not truncated or total_bytes <= max_result:
@@ -184,7 +184,7 @@ class SqlExecutor:
         # If we fetched max_rows + 1, we were truncated by the LIMIT wrapper
         if len(records) > self._settings.max_rows:
             truncated = True
-            truncated_reason = f"Result limited to {self._settings.max_rows} rows"
+            truncated_reason = f"结果已限制为 {self._settings.max_rows} 行"
             processed_rows = processed_rows[: self._settings.max_rows]
             row_count = len(processed_rows)
 

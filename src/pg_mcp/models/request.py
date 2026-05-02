@@ -31,6 +31,6 @@ class QueryRequest(BaseModel):
         if not self.admin_action:
             stripped = self.query.strip()
             if not stripped:
-                raise ValueError("query is required when admin_action is not set")
+                raise ValueError("未设置 admin_action 时必须提供 query")
             self.query = stripped
         return self

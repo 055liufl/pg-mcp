@@ -157,7 +157,7 @@ class SchemaCache:
             await self._ensure_loading(database)
 
         raise SchemaNotReadyError(
-            f"Schema for {database} is loading",
+            f"{database} 的 Schema 正在加载中",
             retry_after_ms=2000,
         )
 

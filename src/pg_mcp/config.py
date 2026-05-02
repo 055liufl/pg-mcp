@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     def _pg_user_not_empty(cls, value: str) -> str:
         """Reject empty pg_user values."""
         if not value or not value.strip():
-            raise ValueError("pg_user must not be empty")
+            raise ValueError("pg_user 不能为空")
         return value
 
     @field_validator("pg_password")
@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     def _pg_password_not_empty(cls, value: SecretStr) -> SecretStr:
         """Reject empty pg_password values."""
         if not value.get_secret_value():
-            raise ValueError("pg_password must not be empty")
+            raise ValueError("pg_password 不能为空")
         return value
 
     @computed_field

@@ -108,7 +108,7 @@ class TestSemaphoreBehavior:
         with pytest.raises(RateLimitedError) as exc_info:
             await engine.execute(request)
 
-        assert "busy" in str(exc_info.value).lower() or "retry" in str(exc_info.value).lower()
+        assert "繁忙" in str(exc_info.value) or "重试" in str(exc_info.value)
 
         engine._semaphore.release()
 

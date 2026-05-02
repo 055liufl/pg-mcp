@@ -184,11 +184,11 @@ class DbInference:
         """
         keywords = self._extract_keywords(user_query)
         if not keywords:
-            raise DbInferNoMatchError("No searchable keywords found in query")
+            raise DbInferNoMatchError("查询中未找到可搜索的关键词")
 
         databases = self._cache.discovered_databases()
         if not databases:
-            raise DbInferNoMatchError("No databases available")
+            raise DbInferNoMatchError("没有可用的数据库")
 
         scored: list[_ScoreEntry] = []
         not_ready: list[str] = []
@@ -212,17 +212,17 @@ class DbInference:
         # If nothing scored and some are not ready, tell caller to retry
         if not scored and not_ready:
             raise SchemaNotReadyError(
-                f"Database schemas still loading: {not_ready}",
+                f"数据库 Schema 仍在加载中: {not_ready}",
                 retry_after_ms=3000,
             )
 
         if not scored:
             if not_ready:
                 raise SchemaNotReadyError(
-                    f"Some databases not ready ({not_ready}), cannot infer",
+                    f"部分数据库尚未就绪 ({not_ready})，无法推断",
                     retry_after_ms=3000,
                 )
-            raise DbInferNoMatchError("Query does not match any database")
+            raise DbInferNoMatchError("查询与任何数据库都不匹配")
 
         # Cross-database detection
         multi_hit = [(db, s) for db, s in scored if s > 0]
@@ -230,7 +230,7 @@ class DbInference:
             hit_dbs = [db for db, _ in multi_hit]
             if self._entity_spread_cross_db(keywords, hit_dbs):
                 raise CrossDbUnsupportedError(
-                    f"Query appears to span multiple databases: {hit_dbs}"
+                    f"查询似乎涉及多个数据库: {hit_dbs}"
                 )
 
         # Ambiguity detection
@@ -239,7 +239,7 @@ class DbInference:
             top1, top2 = scored[0][1], scored[1][1]
             if top1 > 0 and (top1 - top2) / top1 < self.AMBIGUITY_THRESHOLD:
                 raise DbInferAmbiguousError(
-                    message=f"Ambiguous match: {scored[0][0]}, {scored[1][0]}",
+                    message=f"匹配不明确: {scored[0][0]}, {scored[1][0]}",
                     candidates=[s[0] for s in scored[:3]],
                 )
 

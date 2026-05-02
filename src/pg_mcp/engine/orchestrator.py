@@ -219,7 +219,7 @@ class QueryEngine:
         try:
             await asyncio.wait_for(self._semaphore.acquire(), timeout=0.01)
         except TimeoutError:
-            raise RateLimitedError("Server is busy, please retry later")
+            raise RateLimitedError("服务器繁忙，请稍后重试")
 
         try:
             return await self._do_execute(request, request_id, log)
@@ -254,7 +254,7 @@ class QueryEngine:
         # 4. Resolve target database
         if request.database:
             if request.database not in self._cache.discovered_databases():
-                raise DbNotFoundError(f"Database not found: {request.database}")
+                raise DbNotFoundError(f"数据库不存在: {request.database}")
             database = request.database
         else:
             database = await self._db_inference.infer(request.query)
@@ -328,8 +328,8 @@ class QueryEngine:
                     feedback = _build_validator_feedback(val_result.reason or "")
                     continue
                 if val_result.code == "E_SQL_PARSE":
-                    raise SqlParseError(val_result.reason or "SQL parse failed")
-                raise SqlUnsafeError(val_result.reason or "SQL safety check failed")
+                    raise SqlParseError(val_result.reason or "SQL 解析失败")
+                raise SqlUnsafeError(val_result.reason or "SQL 安全检查未通过")
 
             is_explain = val_result.is_explain
 
@@ -368,7 +368,7 @@ class QueryEngine:
                 continue
         else:
             # All retries exhausted without valid SQL
-            raise SqlGenerateError("Failed to generate valid SQL after all retries")
+            raise SqlGenerateError("多次重试后仍未能生成有效的 SQL")
 
         log.info(
             "sql_executed",
@@ -413,7 +413,7 @@ class QueryEngine:
                             )
                             continue
                         raise SqlUnsafeError(
-                            val_result.reason or "Fixed SQL safety check failed"
+                            val_result.reason or "修正后的 SQL 安全检查未通过"
                         )
 
                     is_explain = val_result.is_explain
@@ -440,20 +440,20 @@ class QueryEngine:
                             )
                             continue
                         raise ValidationFailedError(
-                            "Result validation could not be satisfied after repeated fixes"
+                            "多次修正后结果验证仍无法通过"
                         )
                     elif verdict.verdict == "fail":
                         raise ValidationFailedError(
-                            verdict.reason or "Result validation failed"
+                            verdict.reason or "结果验证失败"
                         )
                     break
                 else:
                     raise ValidationFailedError(
-                        "Result validation fix loop exhausted all retries"
+                        "结果验证修正循环已耗尽所有重试次数"
                     )
 
             elif verdict.verdict == "fail":
-                raise ValidationFailedError(verdict.reason or "Result validation failed")
+                raise ValidationFailedError(verdict.reason or "结果验证失败")
 
         # 12. Assemble response
         total_elapsed_ms = int((time.monotonic() - start_time) * 1000)
