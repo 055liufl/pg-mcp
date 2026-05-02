@@ -10,10 +10,13 @@ PostgreSQL Natural Language Query MCP Server — 通过自然语言查询 Postgr
 - **SQL 跨方言转写**: LLM 有时生成 BigQuery / MySQL / Snowflake 风格函数，`SqlRewriter` 自动 transpile 为 PostgreSQL 语法
 - **Schema 自动发现与缓存**: 使用 asyncpg 批量 pg_catalog 查询发现数据库结构，Redis 缓存 + gzip 压缩，支持懒加载和后台预热
 - **大 Schema 智能检索**: 表数超过阈值时自动切换为检索模式，CJK 关键词提取 + 英文同义词扩展，减少 Token 消耗
-- **SQL 安全校验**: 基于 SQLGlot AST 的白名单/黑名单双重校验，仅允许 `SELECT`/`UNION`/`EXPLAIN`，拒绝 DML 和危险函数
+- **SQL 安全校验**: 四层 AST 校验 — 语句白名单（仅 `SELECT`/`UNION`/`EXPLAIN`）+ AST 节点黑名单（拒绝 DML/DDL）+ 函数白名单（`pg_proc` 派生）+ 显式函数黑名单（`pg_sleep`、`dblink` 等）
 - **数据库自动推断**: 根据查询内容自动推断目标数据库，支持歧义检测和跨库查询拦截
 - **双传输模式**: 支持 stdio（Claude Code / Cursor）和 SSE（HTTP）两种 MCP 传输
 - **AI 结果验证**（可选）: 对复杂查询结果进行 AI 辅助验证，支持分层 deny_list 和元数据/脱敏/完整三种数据策略
+- **并发限流**: `asyncio.Semaphore` 限制最大并发请求数，超出时返回结构化 `RateLimitedError`
+- **结果截断**: 单行超 `MAX_CELL_BYTES`、结果集超 `MAX_RESULT_BYTES`、行数超 `MAX_ROWS` 三级截断，硬限制直接拒绝
+- **EXPLAIN 支持**: 自动识别 `EXPLAIN` 语句，跳过外层 LIMIT wrapping，保留执行计划分析能力
 - **依赖注入架构**: 核心组件通过 Protocol 定义接口，`QueryEngine` 依赖抽象而非具体实现，便于测试和扩展
 
 ---
@@ -36,6 +39,8 @@ PostgreSQL Natural Language Query MCP Server — 通过自然语言查询 Postgr
 ---
 
 ## 安装
+
+**环境要求**: Python 3.12+
 
 ### 方式一：全局安装（推荐用于 Claude / Cursor）
 
@@ -476,7 +481,7 @@ LOG_FORMAT=console pg-mcp --transport stdio
 
 1. **AST 级安全校验**: 所有 SQL 通过 SQLGlot 解析为 AST，仅允许 `SELECT`/`UNION`/`EXPLAIN` 语句
 2. **函数黑名单**: 禁止危险函数（`pg_sleep`、`pg_read_file`、`dblink`、`lo_import` 等）
-3. **只读事务**: 执行时设置 `SET TRANSACTION READ ONLY` + `statement_timeout` + `work_mem` 限制
+3. **只读事务**: asyncpg `readonly=True` 事务包装器 + `statement_timeout` + `idle_in_transaction_session_timeout` + `work_mem` + `temp_file_limit` + 外层 LIMIT wrapping（EXPLAIN 豁免）
 
 ### 权限建议
 
@@ -587,7 +592,7 @@ pg_mcp/
 ├── app.py              # FastAPI app (SSE 模式 + /health + /admin/refresh)
 ├── protocols.py        # Protocol 接口定义（依赖注入抽象层）
 ├── engine/             # 核心引擎
-│   ├── orchestrator.py     # QueryEngine 主编排器（7步流水线）
+│   ├── orchestrator.py     # QueryEngine 主编排器（多阶段流水线 + retry/fix 循环）
 │   ├── db_inference.py     # 数据库自动推断（向量相似度匹配）
 │   ├── sql_generator.py    # LLM SQL 生成（带 retry + feedback）
 │   ├── sql_rewriter.py     # 跨方言 SQL transpile（BQ/MySQL/Snowflake → PG）
@@ -646,7 +651,7 @@ uv run mypy pg_mcp/       # 类型检查
 
 | 层 | 目录 | 依赖 | 关注点 |
 |---|---|---|---|
-| 单元测试 | `tests/unit/` | 无外部依赖 | 配置、校验、推断、检索、rewriter、sanitizer |
+| 单元测试 | `tests/unit/` | 无外部依赖 | 配置、校验、推断、检索、rewriter、sanitizer、rate limit |
 | 集成测试 | `tests/integration/` | PG + Redis | 连接池、schema 发现、SQL 执行、缓存、FastAPI |
 | 端到端 | `tests/e2e/` | mock | MCP 协议完整流程（call_tool / list_tools / 错误处理） |
 
