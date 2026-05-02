@@ -8,14 +8,18 @@ and repr output.
 
 from __future__ import annotations
 
+import os
 from enum import Enum
 from pathlib import Path
 
 from pydantic import Field, SecretStr, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# .env file lives at the project root (next to src/).
-_ENV_FILE = str(Path(__file__).resolve().parent.parent.parent / ".env")
+# Allow overriding the .env path via environment variable so that
+# non-editable installs (pip, uv tool install, etc.) can still load
+# configuration without relying on the hard-coded relative path.
+_DEFAULT_ENV_FILE = str(Path(__file__).resolve().parent.parent.parent / ".env")
+_ENV_FILE = os.getenv("PG_MCP_ENV_FILE", _DEFAULT_ENV_FILE)
 
 
 class SslMode(str, Enum):
