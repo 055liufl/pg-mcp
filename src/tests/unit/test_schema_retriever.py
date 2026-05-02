@@ -294,6 +294,25 @@ class TestTokenize:
         assert "email" in tokens
         assert "address" in tokens
 
+    def test_tokenize_extracts_cjk_sequences(self, retriever: SchemaRetriever) -> None:
+        tokens = retriever._tokenize("2025 年总销售额")
+
+        assert "2025" in tokens
+        assert "年总销售额" in tokens
+        # English stopwords should not affect CJK tokens.
+        assert "年总销售额" not in {"the", "is"}
+
+    def test_extract_keywords_enriches_cjk_synonyms(
+        self, retriever: SchemaRetriever
+    ) -> None:
+        # "总销售额" should expand to English sales/revenue synonyms.
+        kws = retriever._extract_keywords("2025 年总销售额")
+
+        assert "sale" in kws
+        assert "sales" in kws
+        assert "revenue" in kws
+        assert "2025" in kws
+
 
 class TestGetRelatedForeignKeys:
     """Tests for foreign key relationship inclusion."""

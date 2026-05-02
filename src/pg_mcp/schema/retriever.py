@@ -36,6 +36,70 @@ _STOPWORDS: set[str] = {
 }
 
 
+# Chinese (CJK) → English synonym map.  Used by both ``DbInference``
+# (database selection) and ``SchemaRetriever`` (relevant table ranking) so
+# that Chinese natural-language queries can match English schema entity
+# names.
+_ZH_SYNONYMS: dict[str, tuple[str, ...]] = {
+    # Blog / content
+    "博客": ("blog", "post", "article"),
+    "文章": ("post", "article"),
+    "草稿": ("draft",),
+    "已发布": ("published",),
+    "评论": ("comment",),
+    "标签": ("tag",),
+    "作者": ("author", "user"),
+    "审计": ("audit", "log"),
+    "日志": ("log",),
+    # E-commerce / sales
+    "用户": ("user", "customer", "account"),
+    "客户": ("customer", "client"),
+    "订单": ("order",),
+    "销售": ("sale", "sales", "revenue"),
+    "营收": ("revenue", "sales"),
+    "收入": ("revenue", "income"),
+    "金额": ("amount", "total"),
+    "总额": ("total", "amount"),
+    "商品": ("product", "item"),
+    "产品": ("product", "item"),
+    "品牌": ("brand",),
+    "品类": ("category",),
+    "类目": ("category",),
+    "库存": ("inventory", "stock"),
+    "支付": ("payment",),
+    "退款": ("refund",),
+    "退货": ("return",),
+    "优惠券": ("coupon",),
+    "购物车": ("cart",),
+    "地址": ("address", "shipping"),
+    "邮箱": ("email",),
+    "手机": ("phone", "mobile"),
+    # Analytics / DW
+    "渠道": ("channel",),
+    "广告": ("ad", "advertisement", "campaign"),
+    "投放": ("campaign", "ad"),
+    "活动": ("campaign",),
+    "邮件": ("email", "send"),
+    "订阅": ("subscription",),
+    "会话": ("session",),
+    "事件": ("event",),
+    "维度": ("dim", "dimension"),
+    "事实": ("fact",),
+    "国家": ("country", "region"),
+    "地区": ("region", "country"),
+    "门店": ("store",),
+    "仓库": ("warehouse",),
+    "活跃": ("active",),
+    "留存": ("retention", "cohort"),
+    "漏斗": ("funnel",),
+    "转化": ("conversion",),
+    "归因": ("attribution",),
+    "终生价值": ("ltv", "lifetime"),
+    "终生消费": ("lifetime",),
+    "工单": ("ticket", "support"),
+    "客服": ("support",),
+}
+
 TokenSet = set[str]
 
 
@@ -166,17 +230,38 @@ class SchemaRetriever:
         return self._build_context(top_tables, related_fks, schema)
 
     def _extract_keywords(self, user_query: str) -> TokenSet:
-        """Extract searchable keywords from a user query."""
-        return self._tokenize(user_query.lower())
+        """Extract searchable keywords from a user query.
+
+        CJK tokens are enriched with English synonyms so Chinese
+        natural-language queries can match English schema entity names.
+        """
+        tokens = self._tokenize(user_query.lower())
+        enriched: set[str] = set(tokens)
+        for tok in tokens:
+            # Only CJK tokens need synonym expansion.
+            if not any("\u4e00" <= c <= "\u9fff" for c in tok):
+                continue
+            for zh_key, en_words in _ZH_SYNONYMS.items():
+                if zh_key in tok:
+                    enriched.update(en_words)
+        return enriched
 
     def _tokenize(self, text: str) -> TokenSet:
-        """Tokenize text into a set of lowercase alphanumeric tokens.
+        """Tokenize text into a set of lowercase tokens.
+
+        Preserves:
+        - English alphanumeric tokens (incl. underscores for identifiers)
+        - CJK character sequences (e.g. "销售额", "滚动")
 
         Filters out common English stopwords and very short tokens.
         """
-        # Extract alphanumeric tokens (including underscores for identifiers)
-        tokens = set(re.findall(r"[a-z0-9_]+", text.lower()))
-        # Filter stopwords and short tokens
+        lowered = text.lower()
+        # English / numeric / underscore tokens
+        en_tokens = set(re.findall(r"[a-z0-9_]+", lowered))
+        # CJK sequences (Unicode ranges CJK Unified Ideographs +
+        # CJK Unified Ideographs Extension A)
+        cjk_tokens = set(re.findall(r"[\u4e00-\u9fff]+", lowered))
+        tokens = en_tokens | cjk_tokens
         return {
             t
             for t in tokens
