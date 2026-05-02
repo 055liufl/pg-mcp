@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from uuid import UUID
 
@@ -23,7 +23,13 @@ def _quote_ident(ident: str) -> str:
 
 def _convert_value(value: object) -> object:
     """Convert an asyncpg-returned Python value to a JSON-serializable form."""
+    # ``datetime`` is a subclass of ``date``; check it first so we keep the
+    # full ISO-8601 timestamp instead of truncating to YYYY-MM-DD.
     if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, time):
         return value.isoformat()
     if isinstance(value, Decimal):
         return float(value)

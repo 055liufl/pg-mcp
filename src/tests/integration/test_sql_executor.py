@@ -387,6 +387,28 @@ class TestConvertValue:
 
         assert result == dt.isoformat()
 
+    def test_convert_date_to_iso(self) -> None:
+        # Regression: PG ``CAST(... AS DATE)`` returns ``datetime.date``
+        # which is *not* a subclass of ``datetime``. Without explicit
+        # handling the row encoder fails with
+        # "Object of type date is not JSON serializable".
+        from datetime import date
+
+        d = date(2026, 5, 1)
+        result = _convert_value(d)
+
+        assert result == "2026-05-01"
+        assert isinstance(result, str)
+
+    def test_convert_time_to_iso(self) -> None:
+        from datetime import time
+
+        t = time(14, 30, 45)
+        result = _convert_value(t)
+
+        assert result == "14:30:45"
+        assert isinstance(result, str)
+
     def test_convert_plain_value_unchanged(self) -> None:
         result = _convert_value("hello")
 
