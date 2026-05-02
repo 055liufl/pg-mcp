@@ -26,6 +26,8 @@ SQL_GENERATION_PROMPT = (
     "- Ensure the query is syntactically correct PostgreSQL\n"
     "- Use appropriate JOINs when multiple tables are needed\n"
     "- Add LIMIT if the user asks for a limited number of results\n"
+    "- For metadata questions (list tables/columns/indexes/views, describe schema), "
+    "query `information_schema` or `pg_catalog` — do NOT join user tables\n"
     "\n"
     "PostgreSQL dialect constraints — use **only** PostgreSQL functions. "
     "Do NOT use BigQuery / MySQL / SQL Server / Snowflake function names. "

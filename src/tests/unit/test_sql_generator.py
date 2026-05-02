@@ -230,3 +230,6 @@ def test_prompt_template_contains_required_placeholders() -> None:
     # safety hints
     assert "SELECT" in SQL_GENERATION_PROMPT
     assert "Do not use any functions that modify data" in SQL_GENERATION_PROMPT
+    # metadata-query routing (use information_schema / pg_catalog, not user-table JOINs)
+    assert "information_schema" in SQL_GENERATION_PROMPT
+    assert "pg_catalog" in SQL_GENERATION_PROMPT
