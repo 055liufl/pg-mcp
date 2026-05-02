@@ -33,6 +33,7 @@ from tests.conftest import (
     MockSchemaCache,
     MockSqlExecutor,
     MockSqlGenerator,
+    MockSqlRewriter,
     MockSqlValidator,
 )
 
@@ -79,6 +80,7 @@ def _make_engine(
     )
     return QueryEngine(
         sql_generator=sql_gen or MockSqlGenerator(sql="SELECT * FROM users"),
+        sql_rewriter=MockSqlRewriter(),
         sql_validator=sql_val or MockSqlValidator(valid=True),
         sql_executor=sql_exec or MockSqlExecutor(
             columns=["id"], column_types=["integer"], rows=[[1]], row_count=1
