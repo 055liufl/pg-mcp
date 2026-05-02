@@ -36,6 +36,9 @@ functions DO NOT EXIST in PostgreSQL — never emit them:
 - `date_add`, `dateadd`, `timestampadd` → use `ts + INTERVAL 'N units'`.
 - `concat_ws` works (PostgreSQL has it), but prefer `||` for plain
   concatenation. Use `||` (NOT `+`) to concatenate strings.
+- Composite type field access: if a column's type is a PostgreSQL composite
+  type (e.g. `postal_address`), access its fields with parentheses:
+  `(alias.column).field_name` — e.g. `(a.address).city`.
 
 If unsure about a function name, prefer SQL standard keywords (CASE,
 COALESCE, NULLIF, GREATEST, LEAST) or stick to functions present in
