@@ -67,7 +67,7 @@ pip install -e ".[dev]"
 
 ## 环境变量配置
 
-pg-mcp 所有配置通过 **`.env` 文件** 读取。`.env` 位于项目根目录 `/home/lfl/pg-mcp/.env`（已加入 `.gitignore`，不会被提交到版本控制）。
+pg-mcp 所有配置通过 **`.env` 文件** 读取。`.env` 位于项目根目录（与 `src/` 同级），已加入 `.gitignore`，不会被提交到版本控制。
 
 ### 配置优先级
 
@@ -166,11 +166,11 @@ Claude Code（`claude` CLI）通过 `stdio` 模式与 MCP Server 通信。配置
 ```json
 {
   "projects": {
-    "/home/lfl/pg-mcp": {
+    "/path/to/pg-mcp": {
       "mcpServers": {
         "pg-mcp": {
           "type": "stdio",
-          "command": "/home/lfl/pg-mcp/src/.venv/bin/pg-mcp",
+          "command": "/path/to/pg-mcp/src/.venv/bin/pg-mcp",
           "args": [
             "--transport",
             "stdio"
@@ -187,7 +187,7 @@ Claude Code（`claude` CLI）通过 `stdio` 模式与 MCP Server 通信。配置
 
 ### 2. 配置 .env 文件
 
-在项目根目录 `/home/lfl/pg-mcp/` 创建 `.env` 文件：
+在项目根目录创建 `.env` 文件：
 
 ```bash
 # PostgreSQL Configuration
@@ -241,7 +241,7 @@ Cursor 同样支持 MCP 协议，配置方式与 Claude Code 类似。
 {
   "mcpServers": {
     "pg-mcp": {
-      "command": "/home/lfl/pg-mcp/src/.venv/bin/pg-mcp",
+      "command": "/path/to/pg-mcp/src/.venv/bin/pg-mcp",
       "args": ["--transport", "stdio"]
     }
   }
@@ -285,7 +285,7 @@ Cursor 全局 MCP 配置路径：
 3. 填写：
    - **Name**: `pg-mcp`
    - **Type**: `command`
-   - **Command**: `/home/lfl/pg-mcp/src/.venv/bin/pg-mcp --transport stdio`
+   - **Command**: `/path/to/pg-mcp/src/.venv/bin/pg-mcp --transport stdio`
 4. 在项目根目录创建 `.env` 文件存放所有配置
 
 ### 验证配置
