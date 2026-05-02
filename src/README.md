@@ -7,11 +7,14 @@ PostgreSQL Natural Language Query MCP Server — 通过自然语言查询 Postgr
 ## 功能特性
 
 - **自然语言转 SQL**: 使用 OpenAI GPT 模型将自然语言查询转换为 PostgreSQL SQL
-- **Schema 自动发现与缓存**: 自动发现数据库结构，缓存于 Redis，支持懒加载和后台预热
-- **SQL 安全校验**: 基于 SQLGlot AST 的白名单/黑名单双重校验，确保只读安全
-- **数据库自动推断**: 根据查询内容自动推断目标数据库，支持歧义检测
+- **SQL 跨方言转写**: LLM 有时生成 BigQuery / MySQL / Snowflake 风格函数，`SqlRewriter` 自动 transpile 为 PostgreSQL 语法
+- **Schema 自动发现与缓存**: 使用 asyncpg 批量 pg_catalog 查询发现数据库结构，Redis 缓存 + gzip 压缩，支持懒加载和后台预热
+- **大 Schema 智能检索**: 表数超过阈值时自动切换为检索模式，CJK 关键词提取 + 英文同义词扩展，减少 Token 消耗
+- **SQL 安全校验**: 基于 SQLGlot AST 的白名单/黑名单双重校验，仅允许 `SELECT`/`UNION`/`EXPLAIN`，拒绝 DML 和危险函数
+- **数据库自动推断**: 根据查询内容自动推断目标数据库，支持歧义检测和跨库查询拦截
 - **双传输模式**: 支持 stdio（Claude Code / Cursor）和 SSE（HTTP）两种 MCP 传输
-- **AI 结果验证**（可选）: 对复杂查询结果进行 AI 辅助验证
+- **AI 结果验证**（可选）: 对复杂查询结果进行 AI 辅助验证，支持分层 deny_list 和元数据/脱敏/完整三种数据策略
+- **依赖注入架构**: 核心组件通过 Protocol 定义接口，`QueryEngine` 依赖抽象而非具体实现，便于测试和扩展
 
 ---
 
@@ -495,9 +498,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 ### 其他安全措施
 
 - 敏感配置（密码、API Key）使用 `SecretStr` 自动脱敏
-- 日志中 SQL 字符串字面量替换为 `'***'`
-- 结果行永不写入日志
+- 日志中 SQL 字符串字面量替换为 `'***'`，结果行永不写入日志
 - 支持 `STRICT_READONLY=true` 强制拒绝写权限用户启动
+- 17 个细分业务异常（`DbNotFoundError`、`SqlUnsafeError`、`RateLimitedError` 等），MCP 层统一转换为结构化 `ErrorDetail`
 
 ---
 
@@ -513,10 +516,15 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### Claude Code 无法识别工具
 
-1. 检查 `~/.claude/settings.json` 或 `.claude/settings.local.json` 的 JSON 语法是否正确
-2. 确认 `pg-mcp` 命令可通过终端直接执行：`which pg-mcp`
-3. 在 Claude Code 中运行 `/mcp` 查看已注册的 MCP 服务器列表
-4. 检查 Claude Code 日志：`~/.claude/logs/` 目录下的日志文件
+1. 检查 `~/.claude.json` 的 JSON 语法是否正确
+2. 确认 `.env` 文件位于**项目根目录**（pg-mcp 进程的 CWD 必须能访问到 `.env`）
+3. 确认 `pg-mcp` 命令可通过终端直接执行：`which pg-mcp`
+4. 在 Claude Code 中运行 `/mcp` 查看已注册的 MCP 服务器列表
+5. 检查 Claude Code 日志：`~/.claude/logs/` 目录下的日志文件
+6. 验证 `.env` 是否被正确加载：
+   ```bash
+   cd /path/to/pg-mcp && python -c "from pg_mcp.config import Settings; s=Settings(); print(s.pg_user, s.pg_port)"
+   ```
 
 ### 数据库连接失败
 
@@ -571,33 +579,39 @@ SSE_PORT=9000 pg-mcp --transport sse
 
 ```
 pg_mcp/
-├── cli.py              # Click CLI 入口
-├── config.py           # pydantic-settings 配置
+├── __init__.py         # 包入口
+├── __main__.py         # python -m pg_mcp 入口
+├── cli.py              # Click CLI 入口 (pg-mcp 命令)
+├── config.py           # pydantic-settings 配置（.env 文件在项目根目录）
 ├── server.py           # MCP Server + Tool 注册
-├── app.py              # FastAPI app (SSE 模式)
+├── app.py              # FastAPI app (SSE 模式 + /health + /admin/refresh)
+├── protocols.py        # Protocol 接口定义（依赖注入抽象层）
 ├── engine/             # 核心引擎
-│   ├── orchestrator.py     # QueryEngine 主编排器
-│   ├── db_inference.py     # 数据库自动推断
-│   ├── sql_generator.py    # LLM SQL 生成
-│   ├── sql_validator.py    # SQLGlot 安全校验
-│   ├── sql_executor.py     # 只读 SQL 执行
-│   └── result_validator.py # AI 结果验证
+│   ├── orchestrator.py     # QueryEngine 主编排器（7步流水线）
+│   ├── db_inference.py     # 数据库自动推断（向量相似度匹配）
+│   ├── sql_generator.py    # LLM SQL 生成（带 retry + feedback）
+│   ├── sql_rewriter.py     # 跨方言 SQL transpile（BQ/MySQL/Snowflake → PG）
+│   ├── sql_validator.py    # SQLGlot AST 安全校验
+│   ├── sql_executor.py     # 只读 SQL 执行（SET TRANSACTION READ ONLY）
+│   └── result_validator.py # AI 结果验证（分层 deny_list）
 ├── schema/             # Schema 发现与缓存
-│   ├── discovery.py    # asyncpg 批量 SQL schema 发现
-│   ├── cache.py        # Redis 缓存层
-│   ├── retriever.py    # 大 schema 检索
+│   ├── discovery.py    # asyncpg 批量 pg_catalog 查询（避免 N+1）
+│   ├── cache.py        # Redis 缓存层（gzip 压缩 + 后台预热）
+│   ├── retriever.py    # 大 schema 检索（CJK 分词 + 英文同义词）
 │   └── state.py        # Schema 状态机
 ├── db/
-│   └── pool.py         # asyncpg 连接池管理
-├── models/             # Pydantic 数据模型
-│   ├── schema.py       # DatabaseSchema / TableInfo / ColumnInfo
+│   └── pool.py         # asyncpg 连接池管理（per-db lazy + retry）
+├── models/             # Pydantic v2 数据模型
+│   ├── schema.py       # DatabaseSchema / TableInfo / ColumnInfo / ViewInfo /
+│   │                   # IndexInfo / ForeignKeyInfo / ConstraintInfo /
+│   │                   # EnumTypeInfo / CompositeTypeInfo
 │   ├── request.py      # QueryRequest
-│   ├── response.py     # QueryResponse
-│   └── errors.py       # ErrorCode + 异常层级
+│   ├── response.py     # QueryResponse / ErrorDetail / AdminRefreshResult
+│   └── errors.py       # ErrorCode + 17 个业务异常子类
 └── observability/
     ├── logging.py       # structlog 日志（JSON / Console）
     ├── metrics.py       # 计时器 / token 计数
-    └── sanitizer.py     # 日志脱敏 / PII 掩码
+    └── sanitizer.py     # 日志脱敏 / PII 掩码 / SQL 字面量替换
 ```
 
 ---
@@ -607,13 +621,13 @@ pg_mcp/
 ```bash
 cd /path/to/pg-mcp/src
 
-# 单元测试（无外部依赖）
+# 单元测试（无外部依赖，纯逻辑）
 uv run pytest tests/unit/ -W ignore
 
 # 集成测试（需 PostgreSQL + Redis）
 uv run pytest tests/integration/ -W ignore
 
-# 端到端测试
+# 端到端测试（MCP 协议完整流程）
 uv run pytest tests/e2e/ -W ignore
 
 # 全量测试
@@ -627,6 +641,14 @@ uv run ruff check .       # lint
 uv run ruff format .      # format
 uv run mypy pg_mcp/       # 类型检查
 ```
+
+### 测试分层
+
+| 层 | 目录 | 依赖 | 关注点 |
+|---|---|---|---|
+| 单元测试 | `tests/unit/` | 无外部依赖 | 配置、校验、推断、检索、rewriter、sanitizer |
+| 集成测试 | `tests/integration/` | PG + Redis | 连接池、schema 发现、SQL 执行、缓存、FastAPI |
+| 端到端 | `tests/e2e/` | mock | MCP 协议完整流程（call_tool / list_tools / 错误处理） |
 
 ### 测试数据库（fixtures）
 
@@ -651,8 +673,11 @@ make docker-down
 
 ## Docker 部署
 
+Dockerfile 位于 `src/Dockerfile`，使用多阶段构建（builder + runtime），非 root 用户运行。
+
 ```bash
-# 构建镜像
+# 构建镜像（在 src/ 目录下）
+cd /path/to/pg-mcp/src
 docker build -t pg-mcp:latest .
 
 # 运行容器（SSE 模式）
